@@ -117,14 +117,22 @@ def download_and_apply(progress_fn=None) -> tuple[bool, str]:
         if not new_tag:
             return False, "Could not find release tag."
 
-        # Use the direct GitHub archive URL — works for public repos without auth
-        archive_url = f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{new_tag}.zip"
+        # Prefer the zipball_url from the API response — it is the official
+        # redirect-aware endpoint and avoids GitHub CDN 403s that can affect
+        # the direct /archive/refs/tags/... URL.
+        archive_url = (
+            data.get("zipball_url")
+            or f"https://api.github.com/repos/{GITHUB_REPO}/zipball/{new_tag}"
+        )
 
         _progress(f"Downloading {new_tag} (source files only, ~1 MB)…")
 
         req = urllib.request.Request(
             archive_url,
-            headers={"User-Agent": f"squad-flow-metrics/{current_version()}"},
+            headers={
+                "User-Agent": f"squad-flow-metrics/{current_version()}",
+                "Accept":     "application/vnd.github+json",
+            },
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
             zip_bytes = resp.read()
