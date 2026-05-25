@@ -348,7 +348,32 @@ jobs:
           Write-Host "Installer ready: $setupName  ($sizeMB MB)"
           echo "SETUP_NAME=$setupName" >> $env:GITHUB_ENV
 
-      # ── 12. Upload both artefacts (always) ────────────────────────────────
+      # ── 11b. Build small app-update zip (source files only, ~1 MB) ───────
+      #    This is what the in-app "Upgrade now" button downloads.
+      #    It contains only the Python source — no runtime, no launcher.
+      #    Uploaded as a release asset so it is reachable via a direct CDN
+      #    URL (github.com/releases/download/…) with no API redirects,
+      #    which works reliably through corporate proxies.
+      - name: Create app-update zip
+        shell: pwsh
+        run: |
+          $updateName = "Squad-Flow-Metrics-$env:VERSION-app-update.zip"
+          $src = "app-update-src"
+          New-Item -ItemType Directory -Path $src | Out-Null
+          $items = @('app.py','config','core','ui','reports','data','.streamlit','version.txt')
+          foreach ($item in $items) {
+            if (Test-Path $item -PathType Container) {
+              Copy-Item -Recurse -Path $item -Destination "$src\$item"
+            } elseif (Test-Path $item -PathType Leaf) {
+              Copy-Item -Path $item -Destination "$src\$item"
+            }
+          }
+          Compress-Archive -Path "$src\*" -DestinationPath $updateName -CompressionLevel Optimal
+          $sizeKB = [math]::Round((Get-Item $updateName).Length / 1KB, 0)
+          Write-Host "App-update zip: $updateName  ($sizeKB KB)"
+          echo "UPDATE_NAME=$updateName" >> $env:GITHUB_ENV
+
+      # ── 12. Upload all artefacts (always) ─────────────────────────────────
       - name: Upload installer as workflow artefact
         uses: actions/upload-artifact@v4
         with:
@@ -363,7 +388,14 @@ jobs:
           path: ${{ env.ZIP_NAME }}
           retention-days: 30
 
-      # ── 13. Attach both to the GitHub Release (tag builds only) ───────────
+      - name: Upload app-update zip as workflow artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.UPDATE_NAME }}
+          path: ${{ env.UPDATE_NAME }}
+          retention-days: 30
+
+      # ── 13. Attach all three to the GitHub Release (tag builds only) ──────
       - name: Attach files to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -371,6 +403,7 @@ jobs:
           files: |
             ${{ env.SETUP_NAME }}
             ${{ env.ZIP_NAME }}
+            ${{ env.UPDATE_NAME }}
           generate_release_notes: true
           body: |
             ## Squad Flow Metrics ${{ env.VERSION }} — Windows

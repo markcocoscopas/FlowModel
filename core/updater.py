@@ -117,22 +117,29 @@ def download_and_apply(progress_fn=None) -> tuple[bool, str]:
         if not new_tag:
             return False, "Could not find release tag."
 
-        # Prefer the zipball_url from the API response — it is the official
-        # redirect-aware endpoint and avoids GitHub CDN 403s that can affect
-        # the direct /archive/refs/tags/... URL.
-        archive_url = (
-            data.get("zipball_url")
-            or f"https://api.github.com/repos/{GITHUB_REPO}/zipball/{new_tag}"
-        )
+        # Find the app-update asset — a small (~1 MB) zip of source files only,
+        # built by the CI workflow and attached directly to the GitHub Release.
+        # Its browser_download_url is a plain CDN link with no API redirects,
+        # which works reliably through corporate proxies.
+        update_url = None
+        for asset in data.get("assets", []):
+            if "app-update" in asset.get("name", "").lower():
+                update_url = asset["browser_download_url"]
+                break
 
-        _progress(f"Downloading {new_tag} (source files only, ~1 MB)…")
+        if not update_url:
+            return False, (
+                "No app-update asset found in this release. "
+                "This release may pre-date the in-app upgrade feature. "
+                "Please download the Setup.exe from the releases page instead: "
+                f"https://github.com/{GITHUB_REPO}/releases/latest"
+            )
+
+        _progress(f"Downloading {new_tag} update (~1 MB)…")
 
         req = urllib.request.Request(
-            archive_url,
-            headers={
-                "User-Agent": f"squad-flow-metrics/{current_version()}",
-                "Accept":     "application/vnd.github+json",
-            },
+            update_url,
+            headers={"User-Agent": f"squad-flow-metrics/{current_version()}"},
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
             zip_bytes = resp.read()
