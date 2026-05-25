@@ -122,8 +122,13 @@ def render_sidebar(df: pd.DataFrame | None = None) -> SidebarState:
         # session-state values from a previous upload don't silently hide rows.
         new_names = tuple(sorted(f.name for f in snap_files_list))
         if st.session_state.get("_last_snap_names") != new_names:
-            st.session_state.pop("date_from", None)
-            st.session_state.pop("date_to",   None)
+            st.session_state.pop("date_from",       None)
+            st.session_state.pop("date_to",         None)
+            # Also bust the data cache — temp paths are always snapshot_0.csv
+            # etc. so the cache key never changes when different files are
+            # uploaded, causing stale data to be served.
+            st.session_state.pop("_data_cache_key", None)
+            st.session_state.pop("_raw_df",         None)
             st.session_state["_last_snap_names"] = new_names
         if len(snap_files_list) > 1:
             st.sidebar.caption(f"✅ {len(snap_files_list)} files loaded — squads will be merged.")
