@@ -88,9 +88,10 @@ class TestDeduplicateColumns:
         out = _deduplicate_columns(df2)
         assert "Labels" in out.columns
 
-    def test_sprint_last_wins(self):
+    def test_sprint_columns_joined(self):
         # pandas renames duplicate CSV columns as Sprint, Sprint.1, Sprint.2 …
-        # _deduplicate_columns must detect this pattern and take the last non-null.
+        # _deduplicate_columns must join all sprint columns with " + " so the
+        # full sprint history is preserved for slippage detection.
         import io as _io
         raw = pd.read_csv(
             _io.StringIO("Sprint,Sprint\nSprint1 [COMPLETED],Sprint2 [COMPLETED]\n")
@@ -100,8 +101,23 @@ class TestDeduplicateColumns:
         out = _deduplicate_columns(raw)
         assert "Sprint" in out.columns
         assert "Sprint.1" not in out.columns
-        # Last non-null should win
-        assert out["Sprint"].iloc[0] == "Sprint2 [COMPLETED]"
+        # All sprint values must be joined so history is not lost
+        assert out["Sprint"].iloc[0] == "Sprint1 [COMPLETED] + Sprint2 [COMPLETED]"
+
+    def test_component_last_wins(self):
+        # Jira puts the parent component first and the team sub-component last.
+        # _deduplicate_columns must take the last non-null for Component/s so
+        # squads sharing a parent component are correctly differentiated.
+        import io as _io
+        raw = pd.read_csv(
+            _io.StringIO("Component/s,Component/s\nPerception MLO,PMD SW Dev\n")
+        )
+        assert list(raw.columns) == ["Component/s", "Component/s.1"]
+        out = _deduplicate_columns(raw)
+        assert "Component/s" in out.columns
+        assert "Component/s.1" not in out.columns
+        # Last non-null (most specific sub-component) should win
+        assert out["Component/s"].iloc[0] == "PMD SW Dev"
 
 
 # ── Integration: load sample CSV ──────────────────────────────────────────────

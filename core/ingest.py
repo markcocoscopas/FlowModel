@@ -108,6 +108,19 @@ def _deduplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
                 ) or None,
                 axis=1,
             )
+        elif "component" in base_name.lower():
+            # Last non-null wins for Component/s.
+            # Jira exports the parent/product component first (e.g. "Perception MLO")
+            # and the team-specific sub-component last (e.g. "PMD SW Dev").
+            # Taking the last non-null gives the most specific value and correctly
+            # differentiates squads that share a common parent component.
+            merged = result[dup_cols].apply(
+                lambda row: next(
+                    (v for v in reversed(row.dropna().tolist()) if str(v).strip()),
+                    None,
+                ),
+                axis=1,
+            )
         else:
             # First non-null
             merged = result[dup_cols].bfill(axis=1).iloc[:, 0]
