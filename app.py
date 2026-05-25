@@ -81,6 +81,33 @@ def _load_data(
     if len(frames) == 1:
         snap_df = frames[0]
     else:
+        # When multiple files are loaded, check whether they all resolve to the
+        # same squad name (common when Component/s is a product area rather than
+        # a team name).  If so, stamp each frame with its filename so the squads
+        # can be distinguished across tabs.
+        squad_sets = [set(f["squad"].dropna().unique()) - {""} for f in frames]
+        all_squad_names = set().union(*squad_sets)
+        if len(all_squad_names) <= 1 and len(frames) > 1:
+            log.info(
+                "All %d files share the same Component/s value — using filenames as squad names.",
+                len(frames),
+            )
+            for i, (frame, path) in enumerate(zip(frames, paths)):
+                # Strip timestamp noise: keep the part before the first space or
+                # date-like pattern, falling back to the full stem truncated.
+                import re as _re
+                stem = Path(path).stem
+                # Remove trailing timestamp patterns like "_2026-05-18T11_23_39+0100"
+                clean = _re.sub(r"[_ ]+\d{4}-\d{2}-\d{2}.*$", "", stem).strip()
+                squad_name = clean[:40] if clean else f"Squad {i + 1}"
+                frames[i] = frame.copy()
+                frames[i]["squad"] = squad_name
+            st.sidebar.info(
+                "ℹ️ Both files share the same **Component/s** value in Jira. "
+                "Squad names have been inferred from the filenames. "
+                "To use your actual squad names, set a different field in a custom config YAML."
+            )
+
         combined = pd.concat(frames, ignore_index=True)
         # De-duplicate: keep the first occurrence of each Issue key
         before = len(combined)
