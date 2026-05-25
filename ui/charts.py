@@ -232,7 +232,13 @@ def wip_over_time_chart(
 def ageing_wip_chart(ageing_items: list) -> go.Figure:
     """
     Scatter chart of in-flight items by status, y = age in days.
-    Percentile reference lines for 50th, 85th, 95th.
+
+    Items with identical (status, age) values are separated by a small
+    deterministic horizontal jitter (seed=42) so no dot hides another.
+    Markers are semi-transparent with a contrasting stroke so any
+    residual stacking is immediately visible.
+
+    Percentile reference lines for p50, p85, p95.
     """
     from core.models import AgeingItem
 
@@ -244,57 +250,78 @@ def ageing_wip_chart(ageing_items: list) -> go.Figure:
     statuses = sorted(set(i.status for i in items))
     status_x = {s: idx for idx, s in enumerate(statuses)}
 
-    x_vals, y_vals, colours, hover, symbols = [], [], [], [], []
+    # Fixed seed → deterministic jitter; identical across reloads / screenshots
+    np.random.seed(42)
+    jitter = np.random.uniform(-0.15, 0.15, len(items))
 
-    for item in items:
-        x = status_x.get(item.status, 0)
-        # Jitter x slightly for readability
-        x_vals.append(x + np.random.uniform(-0.3, 0.3))
+    x_vals:      list[float] = []
+    y_vals:      list[float] = []
+    colours:     list[str]   = []
+    strokes:     list[str]   = []
+    symbols:     list[str]   = []
+    hover:       list[str]   = []
+
+    for idx, item in enumerate(items):
+        x_vals.append(status_x.get(item.status, 0) + jitter[idx])
         y_vals.append(item.age_days)
+
         if item.is_blocked:
-            colours.append(_PALETTE[5])   # vermilion for blocked
+            colours.append(_PALETTE[5])      # vermilion fill
+            strokes.append("#7B0000")         # dark red stroke
             symbols.append("x")
         elif item.is_flagged:
-            colours.append(_PALETTE[0])   # orange for flagged
+            colours.append(_PALETTE[0])      # orange fill
+            strokes.append("darkblue")
             symbols.append("diamond")
         else:
-            colours.append(_PALETTE[1])   # sky blue default
+            colours.append(_PALETTE[1])      # sky blue fill
+            strokes.append("darkblue")
             symbols.append("circle")
 
-        hover.append(
-            f"<b>{item.key}</b><br>{item.title[:50]}<br>"
-            f"Type: {item.item_type}<br>Age: {item.age_days:.0f} days<br>"
-            f"Status: {item.status}"
-            + (" 🚫 BLOCKED" if item.is_blocked else "")
+        flags = (
+            (" 🚫 BLOCKED" if item.is_blocked else "")
             + (" ⚑ FLAGGED" if item.is_flagged else "")
+        )
+        hover.append(
+            f"<b>{item.key}</b><br>"
+            f"{item.title[:55]}<br>"
+            f"Type: {item.item_type}<br>"
+            f"Status: {item.status}<br>"
+            f"Age: <b>{item.age_days:.0f} days</b>"
+            + (f"<br>{flags.strip()}" if flags else "")
         )
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=x_vals, y=y_vals,
+        x=x_vals,
+        y=y_vals,
         mode="markers",
-        marker=dict(color=colours, symbol=symbols, size=10,
-                    line=dict(width=0.8, color="white")),
+        marker=dict(
+            color=colours,
+            symbol=symbols,
+            size=10,
+            opacity=0.55,
+            line=dict(width=1, color=strokes),
+        ),
         hovertemplate="%{text}<extra></extra>",
         text=hover,
         name="In-flight items",
     ))
 
-    # Reference lines from first item (they share the same historical basis)
-    if items:
-        ref = items[0]
-        for val, label, colour in [
-            (ref.p50_reference, "p50", _PERCENTILE_COLOURS[50]),
-            (ref.p85_reference, "p85", _PERCENTILE_COLOURS[85]),
-            (ref.p95_reference, "p95", _PERCENTILE_COLOURS[95]),
-        ]:
-            if val > 0:
-                fig.add_hline(
-                    y=val, line_dash="dash", line_color=colour,
-                    annotation_text=f"{label}: {val:.0f}d",
-                    annotation_position="top right",
-                    annotation_font=dict(size=10, color=colour),
-                )
+    # Percentile reference lines — all items share the same historical basis
+    ref = items[0]
+    for val, label, colour in [
+        (ref.p50_reference, "p50", _PERCENTILE_COLOURS[50]),
+        (ref.p85_reference, "p85", _PERCENTILE_COLOURS[85]),
+        (ref.p95_reference, "p95", _PERCENTILE_COLOURS[95]),
+    ]:
+        if val > 0:
+            fig.add_hline(
+                y=val, line_dash="dash", line_color=colour,
+                annotation_text=f"{label}: {val:.0f}d",
+                annotation_position="top right",
+                annotation_font=dict(size=10, color=colour),
+            )
 
     fig.update_layout(
         title="Ageing WIP",
@@ -303,9 +330,11 @@ def ageing_wip_chart(ageing_items: list) -> go.Figure:
             tickvals=list(status_x.values()),
             ticktext=list(status_x.keys()),
             title="Current status",
+            # Pad edges so jittered markers at column 0 aren't clipped
+            range=[-0.6, len(statuses) - 0.4],
         ),
         yaxis_title="Age (calendar days)",
-        height=420,
+        height=440,
         showlegend=False,
         hovermode="closest",
     )

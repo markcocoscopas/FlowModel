@@ -165,3 +165,39 @@ def test_flow_efficiency_note_contains_phase2():
     note = flow_efficiency_note()
     assert "Phase 2" in note
     assert "changelog" in note.lower()
+
+
+# ── Ageing WIP chart jitter ───────────────────────────────────────────────────
+
+def test_ageing_wip_chart_jitter_separates_overlapping_items():
+    """
+    Two items with identical (status, age_days) must have distinct x-coordinates
+    in the chart so neither dot is hidden behind the other.
+    """
+    from core.models import AgeingItem
+    from ui.charts import ageing_wip_chart
+
+    shared_status = "In Progress"
+    shared_age    = 42.0
+
+    item_a = AgeingItem(
+        key="AAA-1", title="Alpha", item_type="Story",
+        status=shared_status, squad="S", age_days=shared_age,
+        created=pd.Timestamp("2025-01-01"),
+        p50_reference=10.0, p85_reference=20.0, p95_reference=30.0,
+        is_blocked=False, is_flagged=False,
+    )
+    item_b = AgeingItem(
+        key="AAA-2", title="Beta", item_type="Story",
+        status=shared_status, squad="S", age_days=shared_age,
+        created=pd.Timestamp("2025-01-02"),
+        p50_reference=10.0, p85_reference=20.0, p95_reference=30.0,
+        is_blocked=False, is_flagged=False,
+    )
+
+    fig = ageing_wip_chart([item_a, item_b])
+    x_coords = fig.data[0].x
+    assert len(x_coords) == 2, "Expected exactly 2 data points"
+    assert x_coords[0] != x_coords[1], (
+        "Items sharing (status, age) must have distinct x-coordinates after jitter"
+    )

@@ -361,6 +361,9 @@ pytest tests/ --cov=core --cov-report=term-missing   # with coverage
 
 ## Changelog
 
+### v1.3.0
+- **Ageing WIP chart — overlapping markers fixed** — items with identical ages in the same status column are now separated by a small deterministic horizontal jitter (fixed seed, so the chart is identical across reloads and screenshots). Markers are semi-transparent (55% opacity) with a contrasting dark stroke so any residual stacking is immediately visible. Hover shows issue key, status, type, age, and blocked/flagged flags. The counter row below the chart (in-flight, blocked, older-than-p85, older-than-p95) now reconciles exactly with the visible dots.
+
 ### v1.2.9
 - **Blocked count fix (Overview)** — items in the **Blocked workflow state** were not being counted as blocked in the Overview and Ageing WIP tabs unless the custom Blocked field was also set. The `is_blocked` flag now reflects both sources (custom field OR workflow state = Blocked), consistent with the Constraints tab.
 
