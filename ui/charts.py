@@ -437,44 +437,126 @@ def age_by_status_box(age_by_status: dict[str, list[float]]) -> go.Figure:
 # ── Plan Accuracy Scatter ─────────────────────────────────────────────────────
 
 def plan_accuracy_scatter(records: list) -> go.Figure:
-    """Scatter: target end date (x) vs slip days (y)."""
-    from core.models import PlanAccuracyRecord
+    """Scatter: target end date (x) vs slip days (y).
 
+    Three colour-coded groups: on time (±3 d), late (> +3 d), early (< -3 d).
+    The ±3-day band is drawn as a light shaded rectangle so it doesn't
+    obscure the data points that sit at zero slip.
+    """
     if not records:
         return _empty_fig("No plan accuracy data (requires Advanced Roadmaps CSV).")
 
-    x = [r.target_end for r in records]
-    y = [r.slip_days for r in records]
-    keys = [r.key for r in records]
-    titles = [r.title[:40] for r in records]
-    colours = [
-        _PALETTE[2] if abs(v) <= 3       # on time — bluish green
-        else (_PALETTE[5] if v > 3       # late — vermilion
-              else _PALETTE[1])          # early — sky blue
-        for v in y
-    ]
+    _ON_TIME = _PALETTE[2]   # bluish green
+    _LATE    = _PALETTE[5]   # vermilion
+    _EARLY   = _PALETTE[1]   # sky blue
+
+    # Separate into three groups for a clean legend
+    groups: dict[str, dict] = {
+        "on_time": {"label": "On time (±3 d)", "colour": _ON_TIME,  "x": [], "y": [], "cd": []},
+        "late":    {"label": "Late (> +3 d)",  "colour": _LATE,     "x": [], "y": [], "cd": []},
+        "early":   {"label": "Early (< -3 d)", "colour": _EARLY,    "x": [], "y": [], "cd": []},
+    }
+
+    # Small x-jitter so items with the same target date don't sit exactly on top of each other
+    np.random.seed(42)
+    jitter_ms = np.random.uniform(-0.4, 0.4, len(records)) * 86_400_000  # ±0.4 days in ms
+
+    for i, r in enumerate(records):
+        cd = [r.key, r.title[:50], r.squad, r.item_type]
+        x_jit = pd.Timestamp(r.target_end).value / 1e6 + jitter_ms[i]
+        x_val = pd.Timestamp(x_jit * 1e6)
+        if abs(r.slip_days) <= 3:
+            g = groups["on_time"]
+        elif r.slip_days > 3:
+            g = groups["late"]
+        else:
+            g = groups["early"]
+        g["x"].append(x_val)
+        g["y"].append(r.slip_days)
+        g["cd"].append(cd)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=x, y=y,
-        mode="markers",
-        marker=dict(color=colours, size=8, opacity=0.8),
-        hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]}<br>Slip: %{y:.0f} days<extra></extra>",
-        customdata=list(zip(keys, titles)),
-    ))
-    fig.add_hline(y=0, line_dash="dot", line_color="#555555",
-                  annotation_text="Target date", annotation_position="bottom right")
-    fig.add_hline(y=3, line_dash="dash", line_color=_PALETTE[0],
-                  annotation_text="+3d tolerance", annotation_position="top right")
-    fig.add_hline(y=-3, line_dash="dash", line_color=_PALETTE[0],
-                  annotation_text="-3d tolerance", annotation_position="bottom right")
+
+    # ── Shaded ±3-day band (drawn first so it sits behind all traces) ─────────
+    all_x = [r.target_end for r in records]
+    x_min = min(all_x)
+    x_max = max(all_x)
+    # Pad the band slightly wider than the data
+    pad = pd.Timedelta(days=5)
+    fig.add_shape(
+        type="rect",
+        x0=x_min - pad, x1=x_max + pad,
+        y0=-3, y1=3,
+        fillcolor="rgba(0, 158, 115, 0.10)",   # translucent green
+        line_width=0,
+        layer="below",
+    )
+    # Zero line
+    fig.add_hline(y=0, line_dash="dot", line_color="#999999", line_width=1)
+
+    # ── Data traces ───────────────────────────────────────────────────────────
+    for g in groups.values():
+        if not g["x"]:
+            continue
+        fig.add_trace(go.Scatter(
+            x=g["x"],
+            y=g["y"],
+            mode="markers",
+            name=g["label"],
+            marker=dict(
+                color=g["colour"],
+                size=9,
+                opacity=0.85,
+                line=dict(width=1, color="rgba(0,0,0,0.3)"),
+            ),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b><br>"
+                "%{customdata[1]}<br>"
+                "Squad: %{customdata[2]}  |  Type: %{customdata[3]}<br>"
+                "Slip: <b>%{y:+.0f} days</b>"
+                "<extra></extra>"
+            ),
+            customdata=g["cd"],
+        ))
+
+    # ── Band label annotation ─────────────────────────────────────────────────
+    fig.add_annotation(
+        x=x_max + pad,
+        y=0,
+        text="  ±3 d",
+        showarrow=False,
+        xanchor="left",
+        font=dict(size=10, color="#009E73"),
+        xref="x", yref="y",
+    )
+
+    # ── Layout ────────────────────────────────────────────────────────────────
+    all_y = [r.slip_days for r in records]
+    y_max = max(abs(v) for v in all_y) if all_y else 10
+    y_pad = max(y_max * 0.15, 5)
 
     fig.update_layout(
-        title="Plan Accuracy: Slip Days vs Target End Date",
+        title=None,
         xaxis_title="Target end date",
         yaxis_title="Slip (days) — positive = late",
-        height=400,
+        yaxis=dict(
+            range=[-y_max - y_pad, y_max + y_pad],
+            zeroline=False,
+            gridcolor="#eeeeee",
+        ),
+        xaxis=dict(gridcolor="#eeeeee"),
+        height=420,
         hovermode="closest",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            font=dict(size=11),
+        ),
+        plot_bgcolor="white",
+        margin=dict(t=50, r=60),
     )
     return fig
 
