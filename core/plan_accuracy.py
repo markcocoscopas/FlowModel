@@ -32,6 +32,85 @@ log = logging.getLogger(__name__)
 
 _SECS_PER_DAY = 86_400.0
 
+_RISK_AT_RISK_DAYS = 14   # items due within this many days are flagged "at risk"
+
+
+# ── Delivery risk (in-flight items vs target dates) ───────────────────────────
+
+def delivery_risk_summary(df: pd.DataFrame) -> dict:
+    """
+    For in-flight items (not yet resolved) that have a rm_target_end date,
+    calculate how many days remain until the target and classify each item.
+
+    Classification:
+        overdue   — target end date has passed (days_remaining < 0)
+        at_risk   — target is within the next 14 days (0 ≤ days_remaining ≤ 14)
+        on_track  — target is more than 14 days away
+
+    Returns a dict with keys:
+        n_tracked, n_overdue, n_at_risk, n_on_track, records (DataFrame)
+    Returns {} if rm_target_end column is absent or no eligible rows exist.
+    """
+    if "rm_target_end" not in df.columns:
+        return {}
+
+    eligible = df[
+        df["resolved"].isna() &
+        df["rm_target_end"].notna()
+    ].copy()
+
+    if eligible.empty:
+        return {}
+
+    today = pd.Timestamp.now().normalize()
+    eligible["days_remaining"] = (
+        (eligible["rm_target_end"] - today)
+        .dt.total_seconds()
+        .div(_SECS_PER_DAY)
+        .round()
+        .astype(int)
+    )
+
+    def _classify(d: int) -> str:
+        if d < 0:
+            return "overdue"
+        if d <= _RISK_AT_RISK_DAYS:
+            return "at_risk"
+        return "on_track"
+
+    eligible["risk"] = eligible["days_remaining"].apply(_classify)
+
+    n_total   = len(eligible)
+    n_overdue = int((eligible["risk"] == "overdue").sum())
+    n_at_risk = int((eligible["risk"] == "at_risk").sum())
+    n_on_track = int((eligible["risk"] == "on_track").sum())
+
+    # Select the most useful columns for the UI table
+    keep_cols = ["key", "title", "type", "squad", "status",
+                 "rm_target_end", "days_remaining", "risk"]
+    if "hierarchy" in eligible.columns:
+        keep_cols = ["key", "title", "hierarchy", "type", "squad",
+                     "status", "rm_target_end", "days_remaining", "risk"]
+
+    records_df = (
+        eligible[keep_cols]
+        .sort_values("days_remaining")
+        .reset_index(drop=True)
+    )
+
+    log.debug(
+        "delivery_risk_summary: %d tracked, %d overdue, %d at_risk, %d on_track",
+        n_total, n_overdue, n_at_risk, n_on_track,
+    )
+
+    return {
+        "n_tracked":  n_total,
+        "n_overdue":  n_overdue,
+        "n_at_risk":  n_at_risk,
+        "n_on_track": n_on_track,
+        "records":    records_df,
+    }
+
 
 # ── Plan accuracy ─────────────────────────────────────────────────────────────
 

@@ -269,9 +269,11 @@ def load_roadmaps(path: str | Path, config: AppConfig) -> pd.DataFrame:
     rcol = config.roadmaps_columns
     date_fmt = config.date_format
 
-    def _get(col_name: str) -> pd.Series:
-        if col_name in raw.columns:
-            return raw[col_name]
+    def _get(col_name: str, *fallbacks: str) -> pd.Series:
+        """Return the first column that exists in raw, or an empty Series."""
+        for name in (col_name, *fallbacks):
+            if name in raw.columns:
+                return raw[name]
         log.warning("  Roadmaps column '%s' not found.", col_name)
         return pd.Series([""] * len(raw), index=raw.index)
 
@@ -287,11 +289,15 @@ def load_roadmaps(path: str | Path, config: AppConfig) -> pd.DataFrame:
         "rm_progress_pct":  pd.to_numeric(
                                 _get(rcol.get("progress_pct", "Progress (%)")),
                                 errors="coerce"),
+        # Accept either story-points or hours column names — Advanced Roadmaps
+        # exports vary depending on whether SP or time-tracking is configured.
         "rm_done_sp":       pd.to_numeric(
-                                _get(rcol.get("progress_done_sp", "Progress completed (sp)")),
+                                _get(rcol.get("progress_done_sp", "Progress completed (sp)"),
+                                     "Progress completed (h)"),
                                 errors="coerce"),
         "rm_rem_sp":        pd.to_numeric(
-                                _get(rcol.get("progress_rem_sp", "Progress remaining (sp)")),
+                                _get(rcol.get("progress_rem_sp", "Progress remaining (sp)"),
+                                     "Progress remaining (h)"),
                                 errors="coerce"),
         "rm_done_ic":       pd.to_numeric(
                                 _get(rcol.get("done_ic", "Done IC")),
