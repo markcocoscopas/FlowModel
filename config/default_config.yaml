@@ -52,7 +52,7 @@ work_item_types:
 workflow:
   states:
     - {name: "Funnel",       category: "excluded", start: false, end: false}  # backlog/waiting area — excluded from WIP and constraint analysis
-    - {name: "To Do",        category: "queue",    start: false, end: false}
+    - {name: "To Do",        category: "excluded", start: false, end: false}  # pre-work queue — items age here waiting to be started, not a flow constraint
     - {name: "In Progress",  category: "active",   start: true,  end: false}
     - {name: "Implementing", category: "active",   start: false, end: false}
     - {name: "Review",       category: "queue",    start: false, end: false}

@@ -190,7 +190,7 @@ workflow:
   states:
     - {name: "Backlog",      category: "excluded", start: false, end: false}  # waiting area
     - {name: "Funnel",       category: "excluded", start: false, end: false}  # waiting area
-    - {name: "To Do",        category: "queue",    start: false, end: false}
+    - {name: "To Do",        category: "excluded", start: false, end: false}  # pre-work queue — not a flow constraint
     - {name: "In Progress",  category: "active",   start: true,  end: false}  # cycle time starts here
     - {name: "In Review",    category: "active",   start: false, end: false}
     - {name: "Blocked",      category: "queue",    start: false, end: false}
@@ -235,7 +235,7 @@ work_item_types:
 workflow:
   states:
     - {name: "Backlog",      category: "excluded", start: false, end: false}
-    - {name: "To Do",        category: "queue",    start: false, end: false}
+    - {name: "To Do",        category: "excluded", start: false, end: false}  # pre-work queue
     - {name: "In Progress",  category: "active",   start: true,  end: false}
     - {name: "In Review",    category: "active",   start: false, end: false}
     - {name: "Blocked",      category: "queue",    start: false, end: false}
