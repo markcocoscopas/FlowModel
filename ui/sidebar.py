@@ -179,7 +179,15 @@ def render_sidebar(df: pd.DataFrame | None = None) -> SidebarState:
 
     # ── Squad filter ──────────────────────────────────────────────────────────
     if df is not None and not df.empty:
-        available_squads = sorted(df["squad"].dropna().unique().tolist())
+        # Build squad list from team-level work items only.
+        # Epics and Capabilities are often tagged with product-area Component/s
+        # values (e.g. "TMA", "Towing & Hitching") rather than team names, which
+        # would otherwise pollute the squad dropdown with feature names.
+        _TEAM_TYPES = {"Story", "Bug", "Task", "Spike", "Sub-task"}
+        _squad_src  = df[df["type"].isin(_TEAM_TYPES)]
+        if _squad_src.empty:           # fall back to full df if no team-level items
+            _squad_src = df
+        available_squads = sorted(_squad_src["squad"].dropna().unique().tolist())
         available_types  = sorted(df["type"].dropna().unique().tolist())
 
         st.sidebar.subheader("🏃 Filters")

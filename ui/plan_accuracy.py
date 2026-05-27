@@ -15,6 +15,98 @@ from core.plan_accuracy import (
 from config.schema import AppConfig
 from ui.charts import plan_accuracy_scatter
 
+_HIERARCHY_ORDER = ["Capability", "Initiative", "Theme", "Epic", "Story",
+                    "Sub-task", "Task", "Bug", "Spike"]
+_RAG_COLOUR = {"Red": "🔴", "Amber": "🟠", "Green": "🟢", "": "⚪"}
+
+
+def _render_epic_progress(df: pd.DataFrame) -> None:
+    """
+    Show an Epic / Capability progress table from the roadmaps data.
+    Only rendered when the roadmaps CSV is loaded and Epics/Capabilities
+    are present in the current data.
+    """
+    if "rm_target_end" not in df.columns:
+        return
+
+    _EPIC_TYPES = {"Epic", "Capability", "Initiative", "Theme"}
+
+    # Use the `hierarchy` column (from roadmaps) when available; fall back
+    # to the Jira `type` column so the section still works without roadmaps.
+    if "hierarchy" in df.columns:
+        mask = df["hierarchy"].isin(_EPIC_TYPES) | df["type"].isin(_EPIC_TYPES)
+    else:
+        mask = df["type"].isin(_EPIC_TYPES)
+
+    epics_df = df[mask].copy()
+
+    if epics_df.empty:
+        return
+
+    st.subheader("📋 Epic / Capability Progress")
+    st.caption(
+        "Sourced from the Advanced Roadmaps CSV. "
+        "Progress % and issue counts are roll-up values from Jira Advanced Roadmaps."
+    )
+
+    today = pd.Timestamp.now().normalize()
+
+    rows = []
+    for _, row in epics_df.iterrows():
+        target_end = row.get("rm_target_end")
+        if pd.isna(target_end):
+            days_rem = None
+            due_str  = "—"
+        else:
+            days_rem = int((target_end - today).total_seconds() // 86400)
+            due_str  = target_end.strftime("%d %b %Y")
+
+        progress = row.get("rm_progress_pct")
+        done_ic  = row.get("rm_done_ic")
+        total_ic = row.get("rm_total_ic")
+        rag      = str(row.get("rm_rag") or "").strip()
+        rag_icon = _RAG_COLOUR.get(rag, "⚪")
+
+        hier = str(row.get("hierarchy") or row.get("type") or "")
+
+        if days_rem is None:
+            risk_label = "—"
+        elif days_rem < 0:
+            risk_label = f"🔴 {abs(days_rem)}d overdue"
+        elif days_rem <= 14:
+            risk_label = f"🟠 {days_rem}d left"
+        else:
+            risk_label = f"🟢 {days_rem}d left"
+
+        ic_str = (
+            f"{int(done_ic)}/{int(total_ic)}"
+            if pd.notna(done_ic) and pd.notna(total_ic) else "—"
+        )
+
+        rows.append({
+            "Key":         row.get("key", ""),
+            "Title":       str(row.get("title", ""))[:60],
+            "Level":       hier,
+            "Status":      str(row.get("status", "")),
+            "Target end":  due_str,
+            "Delivery":    risk_label,
+            "Progress %":  f"{int(progress)}%" if pd.notna(progress) else "—",
+            "Done / Total": ic_str,
+            "RAG":         f"{rag_icon} {rag}" if rag else "—",
+        })
+
+    if not rows:
+        st.info("No Epics/Capabilities with roadmaps data in the current filters.")
+        return
+
+    # Sort by hierarchy order then by target end date
+    def _sort_key(r):
+        lvl = _HIERARCHY_ORDER.index(r["Level"]) if r["Level"] in _HIERARCHY_ORDER else 99
+        return (lvl, r["Target end"])
+
+    rows.sort(key=_sort_key)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
 _ON_TIME_COLOUR  = "#009E73"   # bluish green
 _LATE_COLOUR     = "#D55E00"   # vermilion
 _EARLY_COLOUR    = "#56B4E9"   # sky blue
@@ -176,7 +268,12 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
 
         st.divider()
 
-        # Section 2: Historical accuracy for resolved items
+        # Section 2: Epic / Capability progress
+        _render_epic_progress(df)
+
+        st.divider()
+
+        # Section 3: Historical accuracy for resolved items
         st.subheader("Historical Accuracy — Completed Items")
         records = plan_accuracy_records(df)
 
@@ -259,6 +356,11 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
             sdf = df[df["squad"] == squad]
             _render_delivery_risk(sdf, title_prefix=f"{squad} — ")
             st.divider()
+
+        # Epic/Capability progress (all squads combined — roadmaps is cross-squad)
+        _render_epic_progress(df)
+
+        st.divider()
 
         # Historical accuracy summary table
         st.subheader("Historical Accuracy by Squad")
