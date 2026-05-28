@@ -39,15 +39,17 @@ def format_report(report: DataQualityReport) -> list[str]:
             bullets.append(f"  - {reason}: {count:,} ({pct}%)")
 
     bullets.append(
-        f"**{report.has_both_dates:,}** items have both Created and Resolved dates "
-        f"({report.pct_contributing_cycle_time}% of total) → contribute to cycle-time metrics."
+        f"**{report.has_both_dates:,}** items are completed (have a Resolved date) — "
+        f"that is **{report.pct_contributing_cycle_time}%** of all accepted items. "
+        f"Cycle time, throughput, and Monte Carlo forecasts are calculated from these."
     )
 
     if report.has_both_dates < acc:
         n_missing = acc - report.has_both_dates
         bullets.append(
-            f"  ⚠ {n_missing:,} accepted items are missing a Resolved date — "
-            "these items are in-flight and contribute to WIP and ageing metrics only."
+            f"  ⚠ **{n_missing:,}** accepted items are still in-flight (no Resolved date yet) — "
+            "these contribute to WIP counts and the Ageing WIP chart, "
+            "but not to cycle-time or throughput calculations."
         )
 
     if report.has_blocked_flag > 0:

@@ -20,6 +20,20 @@ _HIERARCHY_ORDER = ["Capability", "Initiative", "Theme", "Epic", "Story",
 _RAG_COLOUR = {"Red": "🔴", "Amber": "🟠", "Green": "🟢", "": "⚪"}
 
 
+def _s(val, default: str = "") -> str:
+    """Safe str() that returns *default* for any NaN/None/empty variant."""
+    if val is None:
+        return default
+    try:
+        import math
+        if isinstance(val, float) and math.isnan(val):
+            return default
+    except (TypeError, ValueError):
+        pass
+    s = str(val).strip()
+    return s if s and s.lower() != "nan" else default
+
+
 def _render_epic_progress(df: pd.DataFrame) -> None:
     """
     Show an Epic / Capability progress table from the roadmaps data.
@@ -45,8 +59,9 @@ def _render_epic_progress(df: pd.DataFrame) -> None:
 
     st.subheader("📋 Epic / Capability Progress")
     st.caption(
-        "Sourced from the Advanced Roadmaps CSV. "
-        "Progress % and issue counts are roll-up values from Jira Advanced Roadmaps."
+        "Roll-up view of Epics and Capabilities from the Advanced Roadmaps CSV — "
+        "showing target date, delivery risk, and story-count progress. "
+        "See the **Delivery Risk** section above for a breakdown across all work item types including Stories."
     )
 
     today = pd.Timestamp.now().normalize()
@@ -64,10 +79,10 @@ def _render_epic_progress(df: pd.DataFrame) -> None:
         progress = row.get("rm_progress_pct")
         done_ic  = row.get("rm_done_ic")
         total_ic = row.get("rm_total_ic")
-        rag      = str(row.get("rm_rag") or "").strip()
+        rag      = _s(row.get("rm_rag"))
         rag_icon = _RAG_COLOUR.get(rag, "⚪")
 
-        hier = str(row.get("hierarchy") or row.get("type") or "")
+        hier = _s(row.get("hierarchy")) or _s(row.get("type"))
 
         if days_rem is None:
             risk_label = "—"
@@ -84,15 +99,15 @@ def _render_epic_progress(df: pd.DataFrame) -> None:
         )
 
         rows.append({
-            "Key":         row.get("key", ""),
-            "Title":       str(row.get("title", ""))[:60],
-            "Level":       hier,
-            "Status":      str(row.get("status", "")),
-            "Target end":  due_str,
-            "Delivery":    risk_label,
-            "Progress %":  f"{int(progress)}%" if pd.notna(progress) else "—",
+            "Key":          _s(row.get("key")),
+            "Title":        _s(row.get("title"))[:60],
+            "Level":        hier,
+            "Status":       _s(row.get("status")),
+            "Target end":   due_str,
+            "Delivery":     risk_label,
+            "Progress %":   f"{int(progress)}%" if pd.notna(progress) else "—",
             "Done / Total": ic_str,
-            "RAG":         f"{rag_icon} {rag}" if rag else "—",
+            "RAG":          f"{rag_icon} {rag}" if rag else "—",
         })
 
     if not rows:
@@ -166,10 +181,10 @@ def _render_delivery_risk(df: pd.DataFrame, title_prefix: str = "") -> None:
 
     label_col = "hierarchy" if "hierarchy" in records_df.columns else "type"
     hover_texts = [
-        f"<b>{row['key']}</b><br>"
-        f"{str(row.get('title', ''))[:60]}<br>"
-        f"Type: {row.get(label_col, row.get('type', ''))}<br>"
-        f"Status: {row.get('status', '')}<br>"
+        f"<b>{_s(row.get('key'))}</b><br>"
+        f"{_s(row.get('title'))[:60]}<br>"
+        f"Type: {_s(row.get(label_col)) or _s(row.get('type'))}<br>"
+        f"Status: {_s(row.get('status'))}<br>"
         f"Target: {str(row['rm_target_end'])[:10]}<br>"
         f"Days remaining: {int(row['days_remaining'])}"
         for _, row in records_df.iterrows()

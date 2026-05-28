@@ -9,7 +9,7 @@ from core.models import DataQualityReport
 from config.schema import AppConfig
 
 
-def render(report: DataQualityReport | None, config: AppConfig) -> None:
+def render(report: DataQualityReport | None, config: AppConfig, df: pd.DataFrame | None = None) -> None:
     st.header("Data Quality")
 
     with st.expander("ℹ️ What this tells you", expanded=False):
@@ -61,18 +61,31 @@ def render(report: DataQualityReport | None, config: AppConfig) -> None:
             return "✅" if pts >= max_pts else ("⚠️" if pts > 0 else "❌")
 
         st.markdown(
-            f"| Component | Score | Max | Status |\n"
-            f"|-----------|------:|----:|--------|\n"
-            f"| **Cycle-time coverage** — % of items with both Created & Resolved dates | {ct_pts:.0f} | 60 | {_tick(ct_pts, 60)} {ct_pct}% of items eligible |\n"
-            f"| **Low exclusion rate** — < 5% of rows excluded | {excl_pts:.0f} | 20 | {_tick(excl_pts, 20)} {excl_pct}% excluded |\n"
-            f"| **Blocked flag data** — `Custom field (Blocked)` populated | {blocked_pts:.0f} | 10 | {_tick(blocked_pts, 10)} {'present' if blocked_pts else 'not found — constraints tab limited'} |\n"
-            f"| **Plan accuracy data** — Advanced Roadmaps CSV loaded | {plan_pts:.0f} | 10 | {_tick(plan_pts, 10)} {'present' if plan_pts else 'not loaded — plan accuracy tab unavailable'} |\n"
+            f"| Component | Score | Max | What it means |\n"
+            f"|-----------|------:|----:|---------------|\n"
+            f"| **Completed items (cycle-time eligible)** | {ct_pts:.0f} | 60 | "
+            f"{_tick(ct_pts, 60)} **{ct_pct}% of items have a Resolved date** — "
+            f"only completed (Done) items have a resolved date, so this shows what proportion of "
+            f"your data has already been delivered. Cycle time, throughput, and Monte Carlo forecasts "
+            f"are calculated from these items. In-flight items contribute to WIP and ageing only. |\n"
+            f"| **Low exclusion rate** | {excl_pts:.0f} | 20 | "
+            f"{_tick(excl_pts, 20)} **{excl_pct}% of rows were excluded** — "
+            f"rows are excluded by workflow state (e.g. Funnel, To Do), "
+            f"type filter, squad filter, or date range. A high exclusion rate (>20%) usually means "
+            f"the filters are too narrow, or many items are in pre-work states. |\n"
+            f"| **Blocked flag data present** | {blocked_pts:.0f} | 10 | "
+            f"{_tick(blocked_pts, 10)} "
+            f"{'**Blocked custom field is populated** — the Constraints tab can identify blocked items and estimate lost time.' if blocked_pts else '**Blocked field not found** — the `Custom field (Blocked)` column is empty or absent. The Constraints tab will only detect items in the *Blocked* workflow state, not those flagged via the custom field.'} |\n"
+            f"| **Plan accuracy data (Roadmaps CSV)** | {plan_pts:.0f} | 10 | "
+            f"{_tick(plan_pts, 10)} "
+            f"{'**Advanced Roadmaps CSV loaded** — target end dates are available for delivery risk and plan accuracy analysis.' if plan_pts else '**No Roadmaps CSV loaded** — upload an Advanced Roadmaps export via the sidebar to enable the Plan Accuracy tab.'} |\n"
             f"| **Total** | **{score:.0f}** | **100** | |\n"
         )
         st.caption(
-            "The score is a data *readiness* indicator, not a quality judgement on your team. "
-            "A score below 60 usually means the column mapping needs adjusting, "
-            "or the date range filter is too narrow."
+            "💡 The score is a data *readiness* indicator — it measures whether the right data "
+            "is available for each metric. It says nothing about your team's performance. "
+            "A low score almost always means column mapping needs adjusting or filters are too narrow, "
+            "not that the team has poor flow data."
         )
 
     st.divider()
@@ -83,6 +96,24 @@ def render(report: DataQualityReport | None, config: AppConfig) -> None:
         st.markdown(b)
 
     st.divider()
+
+    # ── Squad / component mapping debug ──────────────────────────────────────
+    if df is not None and not df.empty and "squad" in df.columns:
+        with st.expander("🔍 Squad mapping — verify Component/s is correct"):
+            st.caption(
+                f"The **squad** field is read from the `{config.columns.get('squad', 'Component/s')}` "
+                "column in your Jira CSV. The table below shows how many items of each type belong "
+                "to each squad value. If you see label names or product-area names here that shouldn't "
+                "be squads, those items likely have an unexpected value in their `Component/s` field "
+                "in Jira — check the export or use a custom config YAML to remap the squad column."
+            )
+            _squad_type = (
+                df.groupby(["squad", "type"])
+                .size()
+                .reset_index(name="count")
+                .sort_values(["squad", "count"], ascending=[True, False])
+            )
+            st.dataframe(_squad_type, use_container_width=True, hide_index=True)
 
     # ── Raw numbers ──────────────────────────────────────────────────────────
     with st.expander("📊 Raw quality numbers"):

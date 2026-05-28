@@ -261,7 +261,7 @@ def main() -> None:
     with tabs[7]:
         tab_compare.render(filtered_df, config)   # always full dataset — needs all squads
     with tabs[8]:
-        tab_quality.render(quality_report, config)
+        tab_quality.render(quality_report, config, df=display_df)
     with tabs[9]:
         tab_export.render(display_df, config, quality_report)
 

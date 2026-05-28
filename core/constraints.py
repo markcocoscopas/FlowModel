@@ -91,11 +91,18 @@ def constraint_report(
         if not subset.empty:
             age_by_status[state] = [round(float(v), 1) for v in subset.tolist()]
 
-    # Also capture any untracked statuses
+    # Untracked statuses — only include if they have enough items to be
+    # statistically significant (≥ 3) AND the status is not obviously a
+    # pre-work / staging state.  States like "Draft", "Backlog", "Icebox"
+    # shouldn't pollute the constraints chart; significant unknown active
+    # states (high item count) are worth surfacing.
+    _PRE_WORK_STATES = {"draft", "backlog", "icebox", "idea", "new", "open", "triage"}
     untracked_mask = ~in_flight["status"].isin(config.state_order)
     for status, grp in in_flight[untracked_mask].groupby("status"):
+        if str(status).strip().lower() in _PRE_WORK_STATES:
+            continue
         vals = grp["_age"].dropna().tolist()
-        if vals:
+        if len(vals) >= 3:   # only show if there's enough data to be meaningful
             age_by_status[str(status)] = [round(float(v), 1) for v in vals]
 
     # ── 3. WIP breach detection ───────────────────────────────────────────────
