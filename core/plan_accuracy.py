@@ -40,47 +40,41 @@ _DRIFT_MODERATE = 30
 
 # ── Date drift (baseline vs current roadmaps comparison) ──────────────────────
 
-def date_drift_summary(
+def _drift_merge(
     baseline_df: pd.DataFrame,
     current_df: pd.DataFrame,
-) -> dict:
+) -> pd.DataFrame | None:
     """
-    Compare target end dates between two Advanced Roadmaps CSV exports —
-    a historical *baseline* (the original plan) and a *current* export —
-    to expose "soft slip": items whose deadlines have been quietly pushed out.
-
-    Both DataFrames are the output of ``load_roadmaps()``, so they contain
-    columns: key, hierarchy, rm_target_end (and others).
-
-    Returns a dict with:
-        n_compared      — items present in both exports with a target in each
-        n_drifted       — items whose target end date moved later
-        n_pulled_in     — items whose target end date moved earlier (rare)
-        n_unchanged     — items with identical target end dates
-        total_drift_days — sum of positive drift across all drifted items
-        avg_drift_days  — mean drift for drifted items only
-        max_drift_days  — worst single-item drift
-        records         — DataFrame, one row per compared item, sorted by drift desc
-        by_hierarchy    — DataFrame, drift aggregated by hierarchy level
-
-    Returns {} when not enough data to compare.
+    Inner join baseline and current roadmaps DataFrames on key,
+    compute drift_days and drift_class.  Returns None if no overlap.
     """
-    if baseline_df is None or current_df is None:
-        return {}
+    squad_col_base = "rm_squad" if "rm_squad" in baseline_df.columns else None
+    squad_col_curr = "rm_squad" if "rm_squad" in current_df.columns else None
 
-    base = baseline_df[["key", "rm_target_end", "hierarchy"]].rename(
-        columns={"rm_target_end": "baseline_end", "hierarchy": "hierarchy"}
-    ).dropna(subset=["baseline_end"])
+    base_cols = ["key", "rm_target_end", "hierarchy"]
+    if squad_col_base:
+        base_cols.append("rm_squad")
 
-    curr = current_df[["key", "rm_target_end", "hierarchy"]].rename(
-        columns={"rm_target_end": "current_end", "hierarchy": "hierarchy_curr"}
-    ).dropna(subset=["current_end"])
+    base = (
+        baseline_df[base_cols]
+        .rename(columns={"rm_target_end": "baseline_end"})
+        .dropna(subset=["baseline_end"])
+    )
 
-    merged = base.merge(curr[["key", "current_end"]], on="key", how="inner")
+    curr_cols = ["key", "rm_target_end"]
+    if squad_col_curr:
+        curr_cols.append("rm_squad")
 
+    curr = (
+        current_df[curr_cols]
+        .rename(columns={"rm_target_end": "current_end",
+                         "rm_squad":       "squad_curr"})
+        .dropna(subset=["current_end"])
+    )
+
+    merged = base.merge(curr, on="key", how="inner")
     if merged.empty:
-        log.warning("date_drift_summary: no overlapping keys with target dates in both exports.")
-        return {}
+        return None
 
     merged["drift_days"] = (
         (merged["current_end"] - merged["baseline_end"])
@@ -90,65 +84,231 @@ def date_drift_summary(
         .astype(int)
     )
 
-    def _classify(d: int) -> str:
-        if d > _DRIFT_MODERATE:
-            return "major"
-        if d > _DRIFT_MINOR:
-            return "moderate"
-        if d > 0:
-            return "minor"
-        if d < 0:
-            return "pulled_in"
+    def _cls(d: int) -> str:
+        if d > _DRIFT_MODERATE:  return "major"
+        if d > _DRIFT_MINOR:     return "moderate"
+        if d > 0:                return "minor"
+        if d < 0:                return "pulled_in"
         return "unchanged"
 
-    merged["drift_class"] = merged["drift_days"].apply(_classify)
+    merged["drift_class"] = merged["drift_days"].apply(_cls)
 
-    n_compared   = len(merged)
-    n_drifted    = int((merged["drift_days"] > 0).sum())
-    n_pulled_in  = int((merged["drift_days"] < 0).sum())
-    n_unchanged  = int((merged["drift_days"] == 0).sum())
+    # Prefer squad from current export (more up-to-date team assignment)
+    if "squad_curr" in merged.columns:
+        merged["squad"] = merged["squad_curr"].fillna(
+            merged.get("rm_squad", "")
+        )
+    elif "rm_squad" in merged.columns:
+        merged["squad"] = merged["rm_squad"]
+    else:
+        merged["squad"] = ""
 
-    drifted      = merged[merged["drift_days"] > 0]
-    total_drift  = int(drifted["drift_days"].sum()) if not drifted.empty else 0
-    avg_drift    = round(float(drifted["drift_days"].mean()), 1) if not drifted.empty else 0.0
-    max_drift    = int(drifted["drift_days"].max())   if not drifted.empty else 0
+    return merged
 
-    # Records: add readable date columns
+
+def date_drift_summary(
+    baseline_df: pd.DataFrame,
+    current_df: pd.DataFrame,
+    baseline_date: "pd.Timestamp | None" = None,
+    current_date:  "pd.Timestamp | None" = None,
+) -> dict:
+    """
+    Compare target end dates between two Advanced Roadmaps exports to expose
+    "soft slip": items whose deadlines have been quietly pushed out.
+
+    Parameters
+    ----------
+    baseline_df   : roadmaps DataFrame from the original/baseline export
+    current_df    : roadmaps DataFrame from the most recent export
+    baseline_date : date the baseline CSV was exported (used for drift-rate calc)
+    current_date  : date the current CSV was exported (defaults to today)
+
+    Returns a dict with:
+        n_compared, n_drifted, n_pulled_in, n_unchanged,
+        total_drift_days, avg_drift_days, max_drift_days,
+        drift_rate_per_day  — avg drift per elapsed calendar day (None if no dates)
+        records             — DataFrame sorted by drift desc
+        by_hierarchy        — drift aggregated by hierarchy level
+        by_squad            — drift aggregated by squad/team
+
+    Returns {} when not enough data to compare.
+    """
+    if baseline_df is None or current_df is None:
+        return {}
+
+    merged = _drift_merge(baseline_df, current_df)
+    if merged is None:
+        log.warning("date_drift_summary: no overlapping keys with target dates.")
+        return {}
+
+    n_compared  = len(merged)
+    n_drifted   = int((merged["drift_days"] > 0).sum())
+    n_pulled_in = int((merged["drift_days"] < 0).sum())
+    n_unchanged = int((merged["drift_days"] == 0).sum())
+
+    drifted     = merged[merged["drift_days"] > 0]
+    total_drift = int(drifted["drift_days"].sum()) if not drifted.empty else 0
+    avg_drift   = round(float(drifted["drift_days"].mean()), 1) if not drifted.empty else 0.0
+    max_drift   = int(drifted["drift_days"].max()) if not drifted.empty else 0
+
+    # Drift rate: how many days of drift per elapsed calendar day
+    drift_rate: float | None = None
+    if baseline_date is not None and n_drifted > 0:
+        ref = current_date or pd.Timestamp.now().normalize()
+        elapsed = (ref - baseline_date).total_seconds() / _SECS_PER_DAY
+        if elapsed > 0:
+            drift_rate = round(avg_drift / elapsed, 4)
+
+    # Readable date columns for display
     records = merged.copy()
     records["baseline_end_str"] = records["baseline_end"].dt.strftime("%d %b %Y")
     records["current_end_str"]  = records["current_end"].dt.strftime("%d %b %Y")
     records = records.sort_values("drift_days", ascending=False).reset_index(drop=True)
 
-    # Aggregation by hierarchy level
-    by_hier = (
-        merged.groupby("hierarchy")
-        .agg(
-            items=("key", "count"),
-            drifted=("drift_days", lambda x: (x > 0).sum()),
-            avg_drift=("drift_days", lambda x: round(x[x > 0].mean(), 1) if (x > 0).any() else 0.0),
-            max_drift=("drift_days", "max"),
-            total_drift=("drift_days", lambda x: int(x[x > 0].sum())),
+    def _agg(grp_col: str) -> pd.DataFrame:
+        return (
+            merged.groupby(grp_col)
+            .agg(
+                items        =("key", "count"),
+                drifted      =("drift_days", lambda x: int((x > 0).sum())),
+                avg_drift    =("drift_days", lambda x: round(float(x[x > 0].mean()), 1) if (x > 0).any() else 0.0),
+                max_drift    =("drift_days", "max"),
+                total_drift  =("drift_days", lambda x: int(x[x > 0].sum())),
+            )
+            .reset_index()
+            .sort_values("total_drift", ascending=False)
         )
-        .reset_index()
-        .sort_values("total_drift", ascending=False)
-    )
+
+    by_hier  = _agg("hierarchy")
+    by_squad = _agg("squad") if "squad" in merged.columns else pd.DataFrame()
 
     log.info(
-        "date_drift_summary: %d compared, %d drifted, avg %.1f d, max %d d",
+        "date_drift_summary: %d compared, %d drifted, avg %.1f d, max %d d, rate %s d/d",
         n_compared, n_drifted, avg_drift, max_drift,
+        f"{drift_rate:.4f}" if drift_rate else "n/a",
     )
 
     return {
-        "n_compared":     n_compared,
-        "n_drifted":      n_drifted,
-        "n_pulled_in":    n_pulled_in,
-        "n_unchanged":    n_unchanged,
+        "n_compared":       n_compared,
+        "n_drifted":        n_drifted,
+        "n_pulled_in":      n_pulled_in,
+        "n_unchanged":      n_unchanged,
         "total_drift_days": total_drift,
-        "avg_drift_days": avg_drift,
-        "max_drift_days": max_drift,
-        "records":        records,
-        "by_hierarchy":   by_hier,
+        "avg_drift_days":   avg_drift,
+        "max_drift_days":   max_drift,
+        "drift_rate_per_day": drift_rate,
+        "records":          records,
+        "by_hierarchy":     by_hier,
+        "by_squad":         by_squad,
     }
+
+
+def drift_velocity(
+    snapshots: "list[tuple[pd.Timestamp, pd.DataFrame]]",
+    current_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Compute how total drift has accumulated over time across a series of
+    roadmaps snapshots compared against the current export.
+
+    Parameters
+    ----------
+    snapshots  : list of (snapshot_date, roadmaps_df) tuples, oldest first
+    current_df : the most recent roadmaps DataFrame
+
+    Returns a DataFrame with one row per snapshot:
+        snapshot_date, n_compared, n_drifted, total_drift_days,
+        avg_drift_days, drift_rate_per_week
+    """
+    rows = []
+    today = pd.Timestamp.now().normalize()
+
+    for snap_date, snap_df in sorted(snapshots, key=lambda t: t[0]):
+        merged = _drift_merge(snap_df, current_df)
+        if merged is None:
+            continue
+
+        drifted     = merged[merged["drift_days"] > 0]
+        total_drift = int(drifted["drift_days"].sum()) if not drifted.empty else 0
+        avg_drift   = round(float(drifted["drift_days"].mean()), 1) if not drifted.empty else 0.0
+        elapsed_d   = (today - snap_date).total_seconds() / _SECS_PER_DAY
+        rate_pw     = round(avg_drift / (elapsed_d / 7), 2) if elapsed_d > 0 and not drifted.empty else 0.0
+
+        rows.append({
+            "snapshot_date":      snap_date,
+            "n_compared":         len(merged),
+            "n_drifted":          int((merged["drift_days"] > 0).sum()),
+            "total_drift_days":   total_drift,
+            "avg_drift_days":     avg_drift,
+            "drift_rate_per_week": rate_pw,
+        })
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+
+def drift_adjusted_targets(
+    current_df: pd.DataFrame,
+    drift_rate_per_day: float,
+    today: "pd.Timestamp | None" = None,
+) -> pd.DataFrame:
+    """
+    For every in-flight item with a future target end date, project how much
+    additional drift is expected if the current drift rate continues.
+
+    adjusted_target = current_target + (remaining_days × drift_rate_per_day)
+
+    Parameters
+    ----------
+    current_df          : roadmaps DataFrame (output of load_roadmaps)
+    drift_rate_per_day  : avg drift per calendar day, from date_drift_summary
+    today               : reference date (defaults to now)
+
+    Returns a DataFrame with columns:
+        key, hierarchy, rm_squad, current_target, remaining_days,
+        expected_additional_drift, adjusted_target, adjusted_target_str
+    """
+    if drift_rate_per_day is None or drift_rate_per_day <= 0:
+        return pd.DataFrame()
+
+    ref = (today or pd.Timestamp.now().normalize()).normalize()
+
+    inflight = current_df[
+        current_df["rm_target_end"].notna() &
+        (current_df["rm_target_end"] > ref)
+    ].copy()
+
+    if inflight.empty:
+        return pd.DataFrame()
+
+    inflight["remaining_days"] = (
+        (inflight["rm_target_end"] - ref)
+        .dt.total_seconds()
+        .div(_SECS_PER_DAY)
+        .round()
+        .astype(int)
+    )
+    inflight["expected_additional_drift"] = (
+        (inflight["remaining_days"] * drift_rate_per_day)
+        .round()
+        .astype(int)
+    )
+    inflight["adjusted_target"] = (
+        inflight["rm_target_end"] +
+        pd.to_timedelta(inflight["expected_additional_drift"], unit="D")
+    )
+    inflight["adjusted_target_str"] = inflight["adjusted_target"].dt.strftime("%d %b %Y")
+    inflight["current_target_str"]  = inflight["rm_target_end"].dt.strftime("%d %b %Y")
+
+    keep = ["key", "hierarchy", "current_target_str", "remaining_days",
+            "expected_additional_drift", "adjusted_target_str", "adjusted_target"]
+    if "rm_squad" in inflight.columns:
+        keep.insert(2, "rm_squad")
+
+    return (
+        inflight[keep]
+        .sort_values("expected_additional_drift", ascending=False)
+        .reset_index(drop=True)
+    )
 
 
 # ── Delivery risk (in-flight items vs target dates) ───────────────────────────

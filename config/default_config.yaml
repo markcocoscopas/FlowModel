@@ -23,6 +23,7 @@ columns:
 roadmaps_columns:
   id:               "Issue key"
   hierarchy:        "Hierarchy"
+  squad:            "Components"          # team/squad field in Advanced Roadmaps export
   target_start:     "Target start date"
   target_end:       "Target end date"
   progress_pct:     "Progress (%)"

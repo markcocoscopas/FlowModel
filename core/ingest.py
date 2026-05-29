@@ -280,6 +280,7 @@ def load_roadmaps(path: str | Path, config: AppConfig) -> pd.DataFrame:
     df = pd.DataFrame({
         "key":              _get(rcol.get("id", "Issue key")),
         "hierarchy":        _get(rcol.get("hierarchy", "Hierarchy")),
+        "rm_squad":         _get(rcol.get("squad", "Components")),
         "rm_target_start":  pd.to_datetime(
                                 _get(rcol.get("target_start", "Target start date")),
                                 errors="coerce", dayfirst=True, format="mixed"),
