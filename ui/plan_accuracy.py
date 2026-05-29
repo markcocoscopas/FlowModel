@@ -434,6 +434,11 @@ def _render_date_drift(config: AppConfig) -> None:
             st.session_state["_drift_rate_per_day"] = drift["drift_rate_per_day"]
             st.session_state["_baseline_rm_df"]     = baseline_rm_df
 
+        # How many days between the two exports?
+        today        = pd.Timestamp.now().normalize()
+        elapsed_days = max(int((today - baseline_ts).total_seconds() / 86400), 1)
+        window_short = elapsed_days < 14   # rate is unreliable for very short windows
+
         # Summary metrics
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Items compared",       drift["n_compared"])
@@ -453,15 +458,53 @@ def _render_date_drift(config: AppConfig) -> None:
             st.success("✅ No drift detected since the baseline.")
             return
 
-        st.caption(
-            f"**Total soft slip: {drift['total_drift_days']:,} days** across "
-            f"{drift['n_drifted']} items — the cumulative cost of quiet date extensions."
-        )
-        if drift.get("drift_rate_per_day"):
-            st.caption(
-                f"**Drift rate: {drift['drift_rate_per_day']:.3f} days of drift per "
-                f"elapsed calendar day** ({drift['drift_rate_per_day'] * 7:.2f} d / week). "
-                f"Used in the Adjusted Forecast tab."
+        # ── Plain-English summary ──────────────────────────────────────────────
+        st.divider()
+        with st.expander("💬 How to explain this to your product owner", expanded=True):
+            rate      = drift.get("drift_rate_per_day")
+            rate_pw   = rate * 7 if rate else None
+            n_d       = drift["n_drifted"]
+            total_d   = drift["total_drift_days"]
+            max_d     = drift["max_drift_days"]
+            avg_d     = drift["avg_drift_days"]
+
+            if window_short:
+                st.warning(
+                    f"⚠️ **{elapsed_days}-day measurement window — the drift rate is not reliable.** "
+                    f"Dividing any drift by {elapsed_days} days produces a very large rate figure "
+                    f"that overstates the problem. Use the **absolute numbers** below instead, "
+                    f"and compare exports that are **at least 2–4 weeks apart** to get a meaningful rate."
+                )
+
+            st.markdown(
+                f"#### In plain English\n\n"
+                f"Between the baseline export ({baseline_ts.strftime('%d %b %Y')}) and today, "
+                f"**{n_d} item{'s have' if n_d != 1 else ' has'} had {'their' if n_d != 1 else 'its'} "
+                f"target end date quietly pushed out**, adding up to **{total_d} days of hidden slip**. "
+                f"The worst single item moved **{max_d} days further out**.\n\n"
+                + (
+                    f"On average, each drifted item moved **{avg_d:.0f} days** — "
+                    f"{'roughly {:.0f} sprint{}'.format(avg_d / 14, 's' if avg_d / 14 >= 2 else '') if avg_d >= 7 else 'less than one sprint'}.\n\n"
+                ) +
+                (
+                    f"Over a {elapsed_days}-day window the maths gives a rate of "
+                    f"**{rate:.1f} days of drift per calendar day** "
+                    f"({rate_pw:.1f} d/week). "
+                    + (
+                        f"⚠️ This rate looks alarming but is a mathematical artefact of the "
+                        f"short {elapsed_days}-day window — a small denominator inflates it. "
+                        f"Focus on the **total slip ({total_d} days across {n_d} items)** "
+                        f"and the **names of the drifted items** rather than the rate."
+                        if window_short else
+                        f"At this rate, an item with 60 days remaining would be expected to "
+                        f"drift by a further **{rate * 60:.0f} days** before it reaches its target."
+                    )
+                    if rate else ""
+                ) +
+                f"\n\n**Questions to ask the team:**\n"
+                f"- Why did these {n_d} item{'s' if n_d != 1 else ''} move?\n"
+                f"- Were the original dates realistic, or were they aspirational?\n"
+                f"- Is this a one-off catch-up, or is the pattern repeating each sprint?"
             )
 
         st.divider()
