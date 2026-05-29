@@ -21,7 +21,7 @@ throughput and cycle time, not story-point velocity.
 | **Ageing WIP** | In-flight items vs historical cycle-time percentile reference lines |
 | **Forecasts** | Monte Carlo *How Many?* and *When?* — probabilistic, not velocity-based |
 | **Constraints** | Bottleneck signals from age-by-state and blocked-item analysis, with plain-English Theory of Constraints guidance |
-| **Plan Accuracy** | Target end date vs actual, sprint slippage *(requires Roadmaps CSV)* |
+| **Plan Accuracy** | Target end date vs actual, sprint slippage, **Date Drift Analysis** *(requires Roadmaps or snapshot CSV)* |
 | **Compare Squads** | Side-by-side small-multiples — diagnostic, not a league table |
 | **Data Quality** | Exclusion log, scored data readiness (0–100) with per-component breakdown and plain-English verdict |
 | **Export** | Download filtered data as CSV, full HTML report, or individual chart PNGs |
@@ -153,6 +153,136 @@ lives in a different field (e.g. a custom Team field or a label), update
 `config/default_config.yaml` — change `squad: "Component/s"` to match your field name.
 
 > **Data stays local.** The app runs entirely offline. Nothing is sent anywhere.
+
+---
+
+## Date Drift Analysis — how to use it
+
+> **What is date drift?**
+> When a story or epic reaches its target end date without being completed, teams often
+> quietly extend the date rather than record a miss. Each individual extension seems
+> small and reasonable in isolation — but when you aggregate across a whole programme
+> over a PI, the cumulative "soft slip" can hide significant schedule risk that is
+> invisible in standard status reports.
+
+The **Plan Accuracy → Date Drift** tab compares two Jira exports taken at different
+times and shows exactly how much each item's target date has moved.
+
+### What files do you need?
+
+Any two Jira exports from the same project will work:
+
+- **Advanced Roadmaps CSV** (exported from the Advanced Roadmaps plan view) — uses the
+  `Target end date` column
+- **Regular "Created vs Resolved" snapshot CSV** — uses `Custom field (Target end)` or
+  `Due Date`, whichever is populated in your project
+
+The app auto-detects the format. You do **not** need an Advanced Roadmaps CSV.
+
+Upload the **current** (newer) export via the sidebar as usual, then upload the
+**baseline** (older) export inside the Date Drift tab.
+
+---
+
+### Recommended workflow for PI-based programmes
+
+#### On PI Planning day (your baseline)
+
+Export the Roadmaps or snapshot CSV **at the end of PI Planning day**, once all target
+dates have been committed by the teams — not mid-planning while dates are still in flux.
+Save the file somewhere accessible with the date in the filename
+(e.g. `Advanced Roadmaps_PMV_SW_Dev_17062026.csv`). This is your **baseline**.
+
+> The app will try to parse the date from the filename automatically.
+
+#### Every sprint thereafter
+
+Export the same CSV at the **end of each sprint** and save it with the date in the
+filename. Upload the latest export as your current file (sidebar) and any older one as
+the baseline.
+
+| Exports available | What you get |
+|-------------------|-------------|
+| 2 snapshots (baseline + now) | Snapshot comparison — total drift, worst items, squad breakdown |
+| 3+ snapshots | All of the above + **Drift Velocity** chart showing whether drift is accelerating or slowing |
+| 5+ snapshots (full PI) | Reliable drift rate → **Adjusted Forecast** showing where items will *actually* land |
+
+---
+
+### The three views explained
+
+#### 📸 Snapshot comparison
+Compares the baseline and current export side by side. Shows:
+- How many items have drifted and by how much
+- A colour-coded horizontal bar chart: 🔴 major (>30 d) · 🟠 moderate (8–30 d) · 🟡 minor (1–7 d) · 🔵 pulled in
+- Drift by squad — which team is driving the most extension
+- Drift by hierarchy level — is it Capabilities, Epics, or Stories that are moving?
+
+A **plain-English summary** at the top explains the numbers in non-technical language and
+suggests three questions to bring to the team.
+
+> **Short measurement window warning:** if your two exports are fewer than 14 days apart,
+> the *drift rate* figure (days of drift per calendar day) will look alarming — dividing
+> any meaningful drift by 3 or 5 days produces a large number. In that case, focus on
+> the **absolute numbers** (total slip, number of items, worst item) rather than the rate.
+> The app flags this automatically with a warning banner.
+
+#### 📈 Drift velocity
+Upload 2 or more historic exports. The app plots how total drift has accumulated over
+time as a dual-axis line chart:
+- 🔴 Total drift days (left axis) — the cumulative cost
+- 🟠 Items drifted (right axis) — how many items have moved at all
+
+A **rising slope** means dates are being pushed out faster than work is completing.
+A **flattening** means the programme is stabilising.
+A **downward turn** means items are being de-scoped or genuinely pulled in.
+
+This chart is most powerful in a PI retrospective — it shows the story of the entire
+PI in one picture.
+
+#### 🔮 Adjusted forecast
+Once a reliable drift rate is established (needs at least 2–4 weeks of history),
+this view projects how much *additional* drift each in-flight item is likely to
+accumulate before reaching its target.
+
+```
+adjusted_target = current_target + (remaining_days × drift_rate)
+```
+
+The rate is auto-filled from the snapshot comparison but can be overridden manually.
+Items in the top-right of the bubble chart (far from target date AND high expected drift)
+are your highest-risk deliveries.
+
+---
+
+### What to tell your product owner
+
+When presenting drift data, lead with the **absolute numbers**, not the rate:
+
+> *"Since PI Planning, N items have had their target end dates quietly pushed out,
+> adding up to X days of hidden slip. The worst single item moved Y days further out.
+> The drift rate over the PI is Z days per week — at this rate, an item with 60 days
+> remaining is likely to slip by a further [Z × 8.5] days before it lands."*
+
+Then show the **drift bar chart** by item and the **by-squad table** to anchor the
+conversation in specifics rather than abstractions.
+
+Useful follow-up questions to bring to the team:
+- Why did these items move — was the original date aspirational or committed?
+- Is this the same set of items slipping sprint after sprint, or different ones each time?
+- If it's the same items, what is the root cause (dependency, unclear requirements, lack of capacity)?
+
+---
+
+### What *good* looks like
+
+| Signal | Interpretation |
+|--------|---------------|
+| 0 drift across all items | Dates were either very conservative, or de-scoping is happening silently |
+| Small number of items with minor drift | Normal — some estimation variance is expected |
+| Same items appearing in every sprint's drift | Systemic planning problem — those items need explicit risk management |
+| Drift rate falling sprint-on-sprint | The team is stabilising and getting better at right-sizing targets |
+| Drift rate rising sprint-on-sprint | Scope or complexity is increasing faster than capacity — escalate |
 
 ---
 
@@ -360,6 +490,41 @@ pytest tests/ --cov=core --cov-report=term-missing   # with coverage
 ---
 
 ## Changelog
+
+### v1.4.7
+- **Date Drift — plain-English product owner summary** — the Snapshot Comparison tab now opens a "How to explain this to your product owner" box automatically, with a plain-English paragraph, average drift in sprints, and three suggested team questions. When the measurement window is < 14 days a warning explains that the rate figure is a mathematical artefact and directs attention to the absolute numbers instead.
+
+### v1.4.6
+- **Squad dropdown pollution fix** — component values that appear on fewer than 5% of team-level items are now filtered out of the squad dropdown. This removes label-like values (e.g. `PMV_SW`) and product-area components (e.g. `Towing & Hitching Assistance`) that Jira stores in secondary `Component/s` columns alongside the real team name.
+
+### v1.4.5
+- **Date Drift works with regular snapshot CSVs** — the drift comparison no longer requires an Advanced Roadmaps export. Any two regular Jira "Created vs Resolved" snapshot exports can be compared using `Custom field (Target end)`, `Custom field (Target End Date)`, `Custom field (End Date)`, or `Due Date` — the app auto-detects the format.
+
+### v1.4.4
+- **Same-squad multi-file merge fix** — uploading two time-period exports of the same squad (e.g. a May 25 and a May 28 snapshot) no longer incorrectly renames squads to `snapshot_0` / `snapshot_1`. Files sharing the same squad name are merged and de-duplicated by Issue key, keeping the first upload's version of any duplicate.
+
+### v1.4.3
+- **Date Drift Analysis — velocity, squad breakdown, and adjusted forecast** — three sub-tabs added to Plan Accuracy:
+  - *Drift velocity*: upload multiple historic exports to see a line chart of how total drift has accumulated over time
+  - *Squad breakdown*: box-plot showing drift distribution per team
+  - *Adjusted forecast*: projects expected additional drift onto each in-flight item using `adjusted_target = current_target + (remaining_days × drift_rate)`
+
+### v1.4.2
+- **Date Drift Analysis** — new section in the Plan Accuracy tab. Upload a baseline Roadmaps CSV (your original plan) alongside the current export; the app compares every item's target end date and shows a colour-coded horizontal bar chart of drift per item (🔴 major >30 d · 🟠 moderate · 🟡 minor · 🔵 pulled in), a by-hierarchy summary table, and a detail expander.
+
+### v1.4.1
+- **`nan` in Epic/Capability progress table** — fixed string conversion of NaN fields
+- **Draft / pre-work states removed from Constraints chart** — states like Draft, Backlog, Icebox no longer appear in the age-by-state box plot unless they have ≥ 3 items
+- **Data Quality score** — "Cycle-time coverage" renamed to "Completed items" with plain-English explanation; all four score rows now give actionable advice
+- **Squad mapping debug** — new expander in Data Quality shows item count by squad × type to help diagnose component/label bleed-through
+
+### v1.4.0
+- **Epic/Capability Progress table** — Plan Accuracy tab now includes a drill-down table for Epics and Capabilities showing target date, delivery risk (🔴/🟠/🟢), progress %, done/total issue count, and RAG status from the Roadmaps CSV
+- **Squad filter pollution fix** — squad list now built from team-level items only (Story/Bug/Task/Spike/Sub-task), preventing Epic/Capability product-area component names from appearing as squad options
+
+### v1.3.8 – v1.3.9
+- **Plan Accuracy — Delivery Risk view** — new section shows all in-flight items against their target end dates, classified as overdue / at risk (≤14 days) / on track, with a horizontal bar chart
+- **Plan Accuracy scatter chart redesign** — replaced overlapping dashed lines with a shaded ±3-day tolerance band drawn behind the data; three named legend traces (on time / late / early); x-jitter to separate items with the same target date
 
 ### v1.3.0
 - **Ageing WIP chart — overlapping markers fixed** — items with identical ages in the same status column are now separated by a small deterministic horizontal jitter (fixed seed, so the chart is identical across reloads and screenshots). Markers are semi-transparent (55% opacity) with a contrasting dark stroke so any residual stacking is immediately visible. Hover shows issue key, status, type, age, and blocked/flagged flags. The counter row below the chart (in-flight, blocked, older-than-p85, older-than-p95) now reconciles exactly with the visible dots.
