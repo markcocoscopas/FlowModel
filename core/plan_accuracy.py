@@ -30,9 +30,125 @@ from core.models import PlanAccuracyRecord
 
 log = logging.getLogger(__name__)
 
-_SECS_PER_DAY = 86_400.0
-
+_SECS_PER_DAY    = 86_400.0
 _RISK_AT_RISK_DAYS = 14   # items due within this many days are flagged "at risk"
+
+# Drift thresholds (days)
+_DRIFT_MINOR    = 7
+_DRIFT_MODERATE = 30
+
+
+# ── Date drift (baseline vs current roadmaps comparison) ──────────────────────
+
+def date_drift_summary(
+    baseline_df: pd.DataFrame,
+    current_df: pd.DataFrame,
+) -> dict:
+    """
+    Compare target end dates between two Advanced Roadmaps CSV exports —
+    a historical *baseline* (the original plan) and a *current* export —
+    to expose "soft slip": items whose deadlines have been quietly pushed out.
+
+    Both DataFrames are the output of ``load_roadmaps()``, so they contain
+    columns: key, hierarchy, rm_target_end (and others).
+
+    Returns a dict with:
+        n_compared      — items present in both exports with a target in each
+        n_drifted       — items whose target end date moved later
+        n_pulled_in     — items whose target end date moved earlier (rare)
+        n_unchanged     — items with identical target end dates
+        total_drift_days — sum of positive drift across all drifted items
+        avg_drift_days  — mean drift for drifted items only
+        max_drift_days  — worst single-item drift
+        records         — DataFrame, one row per compared item, sorted by drift desc
+        by_hierarchy    — DataFrame, drift aggregated by hierarchy level
+
+    Returns {} when not enough data to compare.
+    """
+    if baseline_df is None or current_df is None:
+        return {}
+
+    base = baseline_df[["key", "rm_target_end", "hierarchy"]].rename(
+        columns={"rm_target_end": "baseline_end", "hierarchy": "hierarchy"}
+    ).dropna(subset=["baseline_end"])
+
+    curr = current_df[["key", "rm_target_end", "hierarchy"]].rename(
+        columns={"rm_target_end": "current_end", "hierarchy": "hierarchy_curr"}
+    ).dropna(subset=["current_end"])
+
+    merged = base.merge(curr[["key", "current_end"]], on="key", how="inner")
+
+    if merged.empty:
+        log.warning("date_drift_summary: no overlapping keys with target dates in both exports.")
+        return {}
+
+    merged["drift_days"] = (
+        (merged["current_end"] - merged["baseline_end"])
+        .dt.total_seconds()
+        .div(_SECS_PER_DAY)
+        .round()
+        .astype(int)
+    )
+
+    def _classify(d: int) -> str:
+        if d > _DRIFT_MODERATE:
+            return "major"
+        if d > _DRIFT_MINOR:
+            return "moderate"
+        if d > 0:
+            return "minor"
+        if d < 0:
+            return "pulled_in"
+        return "unchanged"
+
+    merged["drift_class"] = merged["drift_days"].apply(_classify)
+
+    n_compared   = len(merged)
+    n_drifted    = int((merged["drift_days"] > 0).sum())
+    n_pulled_in  = int((merged["drift_days"] < 0).sum())
+    n_unchanged  = int((merged["drift_days"] == 0).sum())
+
+    drifted      = merged[merged["drift_days"] > 0]
+    total_drift  = int(drifted["drift_days"].sum()) if not drifted.empty else 0
+    avg_drift    = round(float(drifted["drift_days"].mean()), 1) if not drifted.empty else 0.0
+    max_drift    = int(drifted["drift_days"].max())   if not drifted.empty else 0
+
+    # Records: add readable date columns
+    records = merged.copy()
+    records["baseline_end_str"] = records["baseline_end"].dt.strftime("%d %b %Y")
+    records["current_end_str"]  = records["current_end"].dt.strftime("%d %b %Y")
+    records = records.sort_values("drift_days", ascending=False).reset_index(drop=True)
+
+    # Aggregation by hierarchy level
+    by_hier = (
+        merged.groupby("hierarchy")
+        .agg(
+            items=("key", "count"),
+            drifted=("drift_days", lambda x: (x > 0).sum()),
+            avg_drift=("drift_days", lambda x: round(x[x > 0].mean(), 1) if (x > 0).any() else 0.0),
+            max_drift=("drift_days", "max"),
+            total_drift=("drift_days", lambda x: int(x[x > 0].sum())),
+        )
+        .reset_index()
+        .sort_values("total_drift", ascending=False)
+    )
+
+    log.info(
+        "date_drift_summary: %d compared, %d drifted, avg %.1f d, max %d d",
+        n_compared, n_drifted, avg_drift, max_drift,
+    )
+
+    return {
+        "n_compared":     n_compared,
+        "n_drifted":      n_drifted,
+        "n_pulled_in":    n_pulled_in,
+        "n_unchanged":    n_unchanged,
+        "total_drift_days": total_drift,
+        "avg_drift_days": avg_drift,
+        "max_drift_days": max_drift,
+        "records":        records,
+        "by_hierarchy":   by_hier,
+    }
 
 
 # ── Delivery risk (in-flight items vs target dates) ───────────────────────────

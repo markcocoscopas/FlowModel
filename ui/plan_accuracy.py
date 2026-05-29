@@ -6,13 +6,17 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
+from pathlib import Path
+
 from core.plan_accuracy import (
+    date_drift_summary,
     delivery_risk_summary,
     plan_accuracy_records,
     plan_accuracy_summary,
     sprint_slippage_summary,
 )
 from config.schema import AppConfig
+from core.ingest import load_roadmaps
 from ui.charts import plan_accuracy_scatter
 
 _HIERARCHY_ORDER = ["Capability", "Initiative", "Theme", "Epic", "Story",
@@ -240,6 +244,190 @@ def _render_delivery_risk(df: pd.DataFrame, title_prefix: str = "") -> None:
         st.dataframe(show_df, use_container_width=True, hide_index=True)
 
 
+# ── Date Drift ────────────────────────────────────────────────────────────────
+
+_DRIFT_COLOURS = {
+    "major":      "#D55E00",   # vermilion
+    "moderate":   "#E69F00",   # orange
+    "minor":      "#F0E442",   # yellow
+    "pulled_in":  "#56B4E9",   # sky blue
+    "unchanged":  "#CCCCCC",   # grey
+}
+
+
+def _render_date_drift(config: AppConfig) -> None:
+    """
+    Self-contained section: uploads a baseline Roadmaps CSV, compares it with
+    the current roadmaps data stored in session state, and renders a drift chart.
+    """
+    st.subheader("📅 Date Drift Analysis")
+    with st.expander("ℹ️ What is date drift?", expanded=False):
+        st.markdown(
+            "When a story or epic reaches its target end date without being "
+            "completed, teams often quietly push the date out rather than "
+            "recording a miss. Over many iterations this *soft slip* can hide "
+            "significant schedule risk.\n\n"
+            "**How to use this:** upload a copy of the Advanced Roadmaps CSV "
+            "from an earlier point in time (your original plan). The chart "
+            "compares every item's baseline target date with its current target "
+            "date and shows how many days each has drifted.\n\n"
+            "| Colour | Drift |\n"
+            "|--------|-------|\n"
+            "| 🔴 Major | > 30 days |\n"
+            "| 🟠 Moderate | 8 – 30 days |\n"
+            "| 🟡 Minor | 1 – 7 days |\n"
+            "| 🔵 Pulled in | date moved earlier |\n"
+            "| ⚫ Unchanged | no change |"
+        )
+
+    baseline_file = st.file_uploader(
+        "Upload baseline Roadmaps CSV (your original plan)",
+        type=["csv"],
+        key="baseline_roadmaps_upload",
+        help=(
+            "Export the Advanced Roadmaps CSV from Jira at the start of the PI / "
+            "sprint cycle and upload it here. The app will compare target end dates "
+            "between that baseline and the current roadmaps export."
+        ),
+    )
+
+    # Cache baseline in session state so it survives Streamlit re-runs
+    if baseline_file is not None:
+        tmp_dir = Path(st.session_state.get("tmp_dir", "/tmp/squad_flow"))
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        baseline_path = tmp_dir / "baseline_roadmaps.csv"
+        baseline_path.write_bytes(baseline_file.read())
+        st.session_state["_baseline_rm_path"] = str(baseline_path)
+
+    baseline_path_str = st.session_state.get("_baseline_rm_path")
+    current_rm_df     = st.session_state.get("_current_rm_df")  # set below after load
+
+    if not baseline_path_str:
+        st.info(
+            "Upload a baseline Roadmaps CSV above to see how much target dates "
+            "have drifted since the original plan."
+        )
+        return
+
+    if current_rm_df is None:
+        st.warning(
+            "Current Roadmaps CSV not loaded. "
+            "Upload it via the sidebar first, then load the baseline here."
+        )
+        return
+
+    try:
+        baseline_rm_df = load_roadmaps(baseline_path_str, config)
+    except Exception as exc:
+        st.error(f"Could not read baseline CSV: {exc}")
+        return
+
+    drift = date_drift_summary(baseline_rm_df, current_rm_df)
+
+    if not drift:
+        st.warning(
+            "No overlapping items with target end dates found in both CSVs. "
+            "Make sure both files come from the same Jira project and contain "
+            "`Target end date` values."
+        )
+        return
+
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Items compared",    drift["n_compared"])
+    c2.metric(
+        "🔴 Dates drifted later",  drift["n_drifted"],
+        help="Items whose target end date is later in the current export than in the baseline",
+    )
+    c3.metric(
+        "Avg drift (drifted items)",
+        f"+{drift['avg_drift_days']:.1f} d" if drift["n_drifted"] else "—",
+    )
+    c4.metric(
+        "Worst single drift",
+        f"+{drift['max_drift_days']} d" if drift["n_drifted"] else "—",
+    )
+    c5.metric(
+        "🔵 Pulled in earlier",    drift["n_pulled_in"],
+        help="Items whose target end date was moved earlier — a positive signal",
+    )
+
+    if drift["n_drifted"] == 0:
+        st.success("✅ No target date drift detected — all dates are unchanged or pulled in.")
+        return
+
+    st.caption(
+        f"**Total soft slip across all drifted items: "
+        f"{drift['total_drift_days']:,} days** — the cumulative cost of date extensions."
+    )
+
+    st.divider()
+
+    # ── Drift bar chart ───────────────────────────────────────────────────────
+    records = drift["records"]
+    drifted_only = records[records["drift_days"] != 0].head(50)  # cap at 50 for readability
+
+    colours = drifted_only["drift_class"].map(_DRIFT_COLOURS).tolist()
+    hover = [
+        f"<b>{row['key']}</b><br>"
+        f"Baseline: {row['baseline_end_str']}<br>"
+        f"Current:  {row['current_end_str']}<br>"
+        f"Drift: <b>{'+' if row['drift_days'] > 0 else ''}{int(row['drift_days'])} days</b>"
+        for _, row in drifted_only.iterrows()
+    ]
+
+    import plotly.graph_objects as go
+    fig = go.Figure(go.Bar(
+        x=drifted_only["drift_days"].tolist(),
+        y=(drifted_only["key"] + "  ").tolist(),
+        orientation="h",
+        marker_color=colours,
+        hovertext=hover,
+        hoverinfo="text",
+        text=[
+            f"{'+' if d > 0 else ''}{int(d)} d"
+            for d in drifted_only["drift_days"]
+        ],
+        textposition="outside",
+    ))
+    fig.add_vline(x=0, line_dash="solid", line_color="#555555", line_width=1)
+    fig.update_layout(
+        xaxis_title="Drift (days) — positive = date pushed later",
+        yaxis_title=None,
+        yaxis_autorange="reversed",
+        height=max(300, 28 * len(drifted_only) + 80),
+        margin=dict(l=10, r=80, t=30, b=40),
+        plot_bgcolor="white",
+        xaxis=dict(gridcolor="#e8e8e8", zeroline=False),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    if len(records[records["drift_days"] != 0]) > 50:
+        st.caption("Showing top 50 items by drift. See the detail table below for the full list.")
+
+    # ── By hierarchy level ────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("Drift summary by level")
+    by_hier = drift["by_hierarchy"].copy()
+    by_hier.columns = ["Level", "Items compared", "Items drifted",
+                       "Avg drift (d)", "Max drift (d)", "Total drift (d)"]
+    st.dataframe(by_hier, use_container_width=True, hide_index=True)
+
+    # ── Detail table ──────────────────────────────────────────────────────────
+    with st.expander("📋 Full drift detail"):
+        show = records[[
+            "key", "hierarchy", "baseline_end_str", "current_end_str",
+            "drift_days", "drift_class",
+        ]].rename(columns={
+            "key":               "Key",
+            "hierarchy":         "Level",
+            "baseline_end_str":  "Baseline target",
+            "current_end_str":   "Current target",
+            "drift_days":        "Drift (days)",
+            "drift_class":       "Classification",
+        })
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+
 # ── Main render ───────────────────────────────────────────────────────────────
 
 def render(df: pd.DataFrame, config: AppConfig) -> None:
@@ -340,6 +528,11 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
                     "Sprint delivered":  r.sprint_delivered,
                 } for r in sorted(records, key=lambda r: r.slip_days, reverse=True)]
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # Section 4: Date drift (baseline vs current roadmaps)
+        _render_date_drift(config)
 
         st.divider()
         st.subheader("Sprint Slippage")

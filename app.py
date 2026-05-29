@@ -159,6 +159,7 @@ def _get_or_load(state: "SidebarState") -> tuple[pd.DataFrame | None, object | N
             )
             merged = merge_datasets(snap_df, rm_df)
             st.session_state["_raw_df"]         = merged
+            st.session_state["_current_rm_df"]  = rm_df   # stored for date-drift comparison
             st.session_state["_data_cache_key"] = cache_key
             log.info("Data loaded and cached. %d rows.", len(merged))
         except Exception as exc:
