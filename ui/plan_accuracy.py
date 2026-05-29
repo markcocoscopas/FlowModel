@@ -378,192 +378,205 @@ def _render_date_drift(config: AppConfig) -> None:
         tmp_dir = Path(st.session_state.get("tmp_dir", "/tmp/squad_flow"))
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        baseline_file = st.file_uploader(
-            "Baseline CSV — older Jira export (original plan)",
+        baseline_files = st.file_uploader(
+            "Baseline CSV(s) — one per squad (original plan)",
             type=["csv"],
             key="baseline_roadmaps_upload",
+            accept_multiple_files=True,
             help=(
-                "Upload the older export — either an Advanced Roadmaps CSV or a "
-                "regular 'Created vs Resolved' snapshot CSV that includes a target "
-                "end date field (e.g. 'Custom field (Target end)'). "
-                "The app auto-detects the format."
+                "Upload one baseline per squad — either an Advanced Roadmaps CSV or a "
+                "regular snapshot CSV with a target end date field. "
+                "The app auto-detects the format and matches each baseline to the "
+                "correct squad in the current data by squad name."
             ),
         )
-        if baseline_file is not None:
-            p = tmp_dir / "baseline_roadmaps.csv"
-            p.write_bytes(baseline_file.read())
-            st.session_state["_baseline_rm_path"]    = str(p)
-            guessed = _parse_date_from_filename(baseline_file.name)
-            st.session_state["_baseline_date_guess"] = guessed
 
-        baseline_path = st.session_state.get("_baseline_rm_path")
-        if not baseline_path:
-            st.info("Upload a baseline CSV above to compare with the current export.")
-            return  # nothing to show yet
+        # Save each uploaded baseline; track by index so re-runs don't re-read
+        if baseline_files:
+            saved = {}
+            guesses = {}
+            for i, f in enumerate(baseline_files):
+                p = tmp_dir / f"baseline_roadmaps_{i}.csv"
+                p.write_bytes(f.read())
+                saved[i]  = str(p)
+                guesses[i] = _parse_date_from_filename(f.name)
+            st.session_state["_baseline_rm_paths"]  = saved
+            st.session_state["_baseline_date_guesses"] = guesses
 
-        # Baseline export date (needed for drift-rate and adjusted forecast)
-        guessed_date  = st.session_state.get("_baseline_date_guess")
-        default_date  = guessed_date.date() if guessed_date else pd.Timestamp.now().date()
+        saved_paths  = st.session_state.get("_baseline_rm_paths", {})
+        date_guesses = st.session_state.get("_baseline_date_guesses", {})
+
+        if not saved_paths:
+            st.info(
+                "Upload one baseline CSV per squad above to compare with the current export.\n\n"
+                "**Tip:** for PI planning, export each squad's CSV on day 1 of PI planning "
+                "and upload them all here — the app will match each to its squad automatically."
+            )
+            return
+
+        # Single shared baseline date (PI planning day is the same for all squads)
+        first_guess   = next(iter(date_guesses.values()), None)
+        default_date  = first_guess.date() if first_guess else pd.Timestamp.now().date()
         baseline_date = st.date_input(
-            "When was the baseline CSV exported?",
+            "When were these baseline CSVs exported?",
             value=default_date,
             key="baseline_export_date",
-            help="Used to calculate the drift rate (days of drift per elapsed day).",
+            help="Usually the last day of PI planning. Used to calculate the drift rate.",
         )
         baseline_ts = pd.Timestamp(baseline_date)
 
-        try:
-            baseline_rm_df = load_for_drift(baseline_path, config)
-        except Exception as exc:
-            st.error(f"Could not read baseline CSV: {exc}")
+        # Load all baselines and detect their squad names
+        baseline_dfs: list[tuple[str, pd.DataFrame]] = []
+        for i, path_str in saved_paths.items():
+            try:
+                bdf = load_for_drift(path_str, config)
+                squad_name = (
+                    bdf["rm_squad"].dropna().mode().iloc[0]
+                    if not bdf["rm_squad"].dropna().empty
+                    else f"Baseline {i + 1}"
+                )
+                baseline_dfs.append((_s(squad_name), bdf))
+            except Exception as exc:
+                st.error(f"Could not read baseline {i + 1}: {exc}")
+
+        if not baseline_dfs:
             return
 
-        drift = date_drift_summary(
-            baseline_rm_df, current_rm_df,
-            baseline_date=baseline_ts,
-        )
-        if not drift:
-            st.warning(
-                "No overlapping items with target end dates found. "
-                "Make sure both files are from the same Jira project."
-            )
+        # ── Render results — one section per squad ─────────────────────────────
+        # Collect all drift results first so we can show a combined summary header
+        results: list[tuple[str, dict]] = []
+        today = pd.Timestamp.now().normalize()
+
+        for squad_name, baseline_rm_df in baseline_dfs:
+            # Filter current data to this squad (or use all if only one squad)
+            if "rm_squad" in current_rm_df.columns:
+                curr_squad = current_rm_df[
+                    current_rm_df["rm_squad"].fillna("").str.strip() == squad_name.strip()
+                ]
+                if curr_squad.empty:
+                    curr_squad = current_rm_df   # fallback: compare against everything
+            else:
+                curr_squad = current_rm_df
+
+            drift = date_drift_summary(baseline_rm_df, curr_squad, baseline_date=baseline_ts)
+            if drift:
+                results.append((squad_name, drift))
+
+        if not results:
+            st.warning("No overlapping items with target end dates found in any baseline.")
             return
 
-        # Store drift rate for adjusted forecast tab
-        if drift.get("drift_rate_per_day"):
-            st.session_state["_drift_rate_per_day"] = drift["drift_rate_per_day"]
-            st.session_state["_baseline_rm_df"]     = baseline_rm_df
+        # Store drift rate from first result for Adjusted Forecast tab
+        first_drift = results[0][1]
+        if first_drift.get("drift_rate_per_day"):
+            st.session_state["_drift_rate_per_day"] = first_drift["drift_rate_per_day"]
 
-        # How many days between the two exports?
-        today        = pd.Timestamp.now().normalize()
         elapsed_days = max(int((today - baseline_ts).total_seconds() / 86400), 1)
-        window_short = elapsed_days < 14   # rate is unreliable for very short windows
+        window_short = elapsed_days < 14
 
-        # Summary metrics
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Items compared",       drift["n_compared"])
-        c2.metric("🔴 Drifted later",      drift["n_drifted"])
-        c3.metric(
-            "Avg drift",
-            f"+{drift['avg_drift_days']:.1f} d" if drift["n_drifted"] else "—",
-            help="Mean days of drift, for items that drifted only",
-        )
-        c4.metric(
-            "Worst drift",
-            f"+{drift['max_drift_days']} d" if drift["n_drifted"] else "—",
-        )
-        c5.metric("🔵 Pulled in earlier", drift["n_pulled_in"])
-
-        if drift["n_drifted"] == 0:
-            st.success("✅ No drift detected since the baseline.")
-            return
-
-        # ── Plain-English summary ──────────────────────────────────────────────
-        st.divider()
-        with st.expander("💬 How to explain this to your product owner", expanded=True):
-            rate      = drift.get("drift_rate_per_day")
-            rate_pw   = rate * 7 if rate else None
-            n_d       = drift["n_drifted"]
-            total_d   = drift["total_drift_days"]
-            max_d     = drift["max_drift_days"]
-            avg_d     = drift["avg_drift_days"]
-
-            if window_short:
-                st.warning(
-                    f"⚠️ **{elapsed_days}-day measurement window — the drift rate is not reliable.** "
-                    f"Dividing any drift by {elapsed_days} days produces a very large rate figure "
-                    f"that overstates the problem. Use the **absolute numbers** below instead, "
-                    f"and compare exports that are **at least 2–4 weeks apart** to get a meaningful rate."
-                )
-
+        # ── Combined header metrics across all squads ──────────────────────────
+        if len(results) > 1:
+            total_compared = sum(r["n_compared"]    for _, r in results)
+            total_drifted  = sum(r["n_drifted"]     for _, r in results)
+            total_slip     = sum(r["total_drift_days"] for _, r in results)
+            worst_drift    = max(r["max_drift_days"] for _, r in results)
             st.markdown(
-                f"#### In plain English\n\n"
-                f"Between the baseline export ({baseline_ts.strftime('%d %b %Y')}) and today, "
-                f"**{n_d} item{'s have' if n_d != 1 else ' has'} had {'their' if n_d != 1 else 'its'} "
-                f"target end date quietly pushed out**, adding up to **{total_d} days of hidden slip**. "
-                f"The worst single item moved **{max_d} days further out**.\n\n"
-                + (
-                    f"On average, each drifted item moved **{avg_d:.0f} days** — "
-                    f"{'roughly {:.0f} sprint{}'.format(avg_d / 14, 's' if avg_d / 14 >= 2 else '') if avg_d >= 7 else 'less than one sprint'}.\n\n"
-                ) +
-                (
-                    f"Over a {elapsed_days}-day window the maths gives a rate of "
-                    f"**{rate:.1f} days of drift per calendar day** "
-                    f"({rate_pw:.1f} d/week). "
-                    + (
-                        f"⚠️ This rate looks alarming but is a mathematical artefact of the "
-                        f"short {elapsed_days}-day window — a small denominator inflates it. "
-                        f"Focus on the **total slip ({total_d} days across {n_d} items)** "
-                        f"and the **names of the drifted items** rather than the rate."
-                        if window_short else
-                        f"At this rate, an item with 60 days remaining would be expected to "
-                        f"drift by a further **{rate * 60:.0f} days** before it reaches its target."
-                    )
-                    if rate else ""
-                ) +
-                f"\n\n**Questions to ask the team:**\n"
-                f"- Why did these {n_d} item{'s' if n_d != 1 else ''} move?\n"
-                f"- Were the original dates realistic, or were they aspirational?\n"
-                f"- Is this a one-off catch-up, or is the pattern repeating each sprint?"
+                f"**All squads combined** — {total_compared} items compared · "
+                f"🔴 {total_drifted} drifted · {total_slip} days total slip · "
+                f"worst single item: +{worst_drift} d"
             )
-
-        st.divider()
-        _drift_bar_chart(drift["records"])
-
-        # By squad
-        if not drift["by_squad"].empty and drift["by_squad"]["squad"].str.strip().any():
             st.divider()
-            st.subheader("Drift by squad")
-            by_sq = drift["by_squad"].copy()
-            by_sq.columns = ["Squad", "Items", "Drifted", "Avg (d)", "Max (d)", "Total (d)"]
-            st.dataframe(by_sq, use_container_width=True, hide_index=True)
 
-            # Mini bar chart per squad
-            squads = by_sq[by_sq["Drifted"] > 0]["Squad"].tolist()
-            if squads:
-                fig_sq = go.Figure()
-                for sq in squads:
-                    sq_records = drift["records"][
-                        drift["records"]["squad"].str.strip() == sq.strip()
-                    ]
-                    drifted = sq_records[sq_records["drift_days"] > 0]
-                    if drifted.empty:
-                        continue
-                    fig_sq.add_trace(go.Box(
-                        y=drifted["drift_days"].tolist(),
-                        name=sq,
-                        boxmean=True,
-                        boxpoints="all",
-                        jitter=0.3,
-                        pointpos=0,
-                    ))
-                fig_sq.update_layout(
-                    yaxis_title="Drift (days)",
-                    title="Drift distribution by squad",
-                    height=350,
-                    showlegend=False,
-                    plot_bgcolor="white",
+        # ── Per-squad results ──────────────────────────────────────────────────
+        for squad_name, drift in results:
+            header = f"### {squad_name}" if len(results) > 1 else ""
+            if header:
+                st.markdown(header)
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Items compared",    drift["n_compared"])
+            c2.metric("🔴 Drifted later",   drift["n_drifted"])
+            c3.metric(
+                "Avg drift",
+                f"+{drift['avg_drift_days']:.1f} d" if drift["n_drifted"] else "—",
+            )
+            c4.metric(
+                "Worst drift",
+                f"+{drift['max_drift_days']} d" if drift["n_drifted"] else "—",
+            )
+            c5.metric("🔵 Pulled in", drift["n_pulled_in"])
+
+            if drift["n_drifted"] == 0:
+                st.success(f"✅ No drift detected for {squad_name}.")
+            else:
+                st.caption(
+                    f"**Total soft slip: {drift['total_drift_days']:,} days** across "
+                    f"{drift['n_drifted']} items.  "
+                    f"Measurement window: {elapsed_days} day{'s' if elapsed_days != 1 else ''}."
                 )
-                st.plotly_chart(fig_sq, use_container_width=True)
 
-        # By hierarchy
-        st.divider()
-        st.subheader("Drift by hierarchy level")
-        by_h = drift["by_hierarchy"].copy()
-        by_h.columns = ["Level", "Items", "Drifted", "Avg (d)", "Max (d)", "Total (d)"]
-        st.dataframe(by_h, use_container_width=True, hide_index=True)
+                # Plain-English summary
+                with st.expander(
+                    f"💬 How to explain {squad_name} drift to your product owner",
+                    expanded=(len(results) == 1),
+                ):
+                    rate  = drift.get("drift_rate_per_day")
+                    n_d   = drift["n_drifted"]
+                    total_d = drift["total_drift_days"]
+                    max_d = drift["max_drift_days"]
+                    avg_d = drift["avg_drift_days"]
 
+                    if window_short:
+                        st.warning(
+                            f"⚠️ **{elapsed_days}-day window — drift rate not reliable.** "
+                            f"Focus on absolute numbers; compare exports ≥ 14 days apart for a meaningful rate."
+                        )
+                    st.markdown(
+                        f"Between {baseline_ts.strftime('%d %b %Y')} and today, "
+                        f"**{n_d} item{'s have' if n_d != 1 else ' has'} had {'their' if n_d != 1 else 'its'} "
+                        f"target end date quietly pushed out**, adding up to **{total_d} days of hidden slip**. "
+                        f"The worst single item moved **{max_d} days further out**.\n\n"
+                        + (f"On average, each drifted item moved **{avg_d:.0f} days** — "
+                           f"{'roughly {:.0f} sprint{}'.format(avg_d/14, 's' if avg_d/14 >= 2 else '') if avg_d >= 7 else 'less than one sprint'}.\n\n")
+                        + (f"Drift rate: **{rate:.2f} d/calendar day ({rate*7:.1f} d/week)**."
+                           + (" ⚠️ Inflated by short window — treat as indicative." if window_short else
+                              f" An item with 60 days remaining is expected to drift a further **{rate*60:.0f} days**.")
+                           if rate else "")
+                        + f"\n\n**Questions to ask the team:** Why did these items move? "
+                          f"Are the original dates realistic? Is this pattern repeating?"
+                    )
+
+                st.divider()
+                _drift_bar_chart(drift["records"], label=squad_name if len(results) > 1 else "")
+
+            if len(results) > 1:
+                st.divider()
+
+        # Hierarchy table (combined)
+        all_hier = pd.concat(
+            [r["by_hierarchy"].assign(squad=sq) for sq, r in results],
+            ignore_index=True,
+        )
+        if not all_hier.empty:
+            st.subheader("Drift by hierarchy level")
+            all_hier.columns = [c if c != "squad" else "Squad" for c in all_hier.columns]
+            display_cols = ["Squad"] + [c for c in all_hier.columns if c != "Squad"] if len(results) > 1 else [c for c in all_hier.columns if c != "Squad"]
+            st.dataframe(all_hier[display_cols], use_container_width=True, hide_index=True)
+
+        # Full detail table (combined across all squads)
+        all_records = pd.concat([r["records"] for _, r in results], ignore_index=True)
         with st.expander("📋 Full drift detail"):
             show_cols = ["key", "hierarchy", "squad", "baseline_end_str",
                          "current_end_str", "drift_days", "drift_class"]
-            show_cols = [c for c in show_cols if c in drift["records"].columns]
+            show_cols = [c for c in show_cols if c in all_records.columns]
             col_names = {
                 "key": "Key", "hierarchy": "Level", "squad": "Squad",
                 "baseline_end_str": "Baseline", "current_end_str": "Current",
                 "drift_days": "Drift (d)", "drift_class": "Class",
             }
             st.dataframe(
-                drift["records"][show_cols].rename(columns=col_names),
+                all_records.sort_values("drift_days", ascending=False)[show_cols]
+                .rename(columns=col_names),
                 use_container_width=True, hide_index=True,
             )
 
