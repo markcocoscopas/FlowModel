@@ -165,22 +165,52 @@ lives in a different field (e.g. a custom Team field or a label), update
 > over a PI, the cumulative "soft slip" can hide significant schedule risk that is
 > invisible in standard status reports.
 
-The **Plan Accuracy → Date Drift** tab compares two Jira exports taken at different
+The **Plan Accuracy → Date Drift** tab compares Jira exports taken at different
 times and shows exactly how much each item's target date has moved.
 
 ### What files do you need?
 
-Any two Jira exports from the same project will work:
+Any Jira export from the same project will work — the app auto-detects the format:
 
 - **Advanced Roadmaps CSV** (exported from the Advanced Roadmaps plan view) — uses the
   `Target end date` column
-- **Regular "Created vs Resolved" snapshot CSV** — uses `Custom field (Target end)` or
-  `Due Date`, whichever is populated in your project
+- **Regular "Created vs Resolved" snapshot CSV** — uses `Custom field (Target end)`,
+  `Custom field (Target End Date)`, `Custom field (End Date)`, or `Due Date`,
+  whichever is populated in your project
 
-The app auto-detects the format. You do **not** need an Advanced Roadmaps CSV.
+You do **not** need an Advanced Roadmaps CSV.
 
-Upload the **current** (newer) export via the sidebar as usual, then upload the
-**baseline** (older) export inside the Date Drift tab.
+**How to load data:**
+- Upload the **current** (newest) export via the **sidebar** as usual
+- Upload the **baseline** (older) export(s) inside the **Date Drift tab** itself
+
+---
+
+### Multi-squad support
+
+If you have two or more scrum squads each with their own baseline, upload **all the
+baseline CSVs at once** — the tab now accepts multiple files. The app:
+
+1. Reads the `Components` (squad) field from each baseline file automatically
+2. Matches each baseline to the corresponding squad's current data
+3. Shows a **combined programme-level summary** (total items, total slip, worst item)
+   followed by a **separate section per squad** with its own metrics, drift chart,
+   and plain-English product owner summary
+
+One shared **baseline export date** input covers all squads — on PI planning day,
+all squads baseline at the same time.
+
+**Example — two squads, PI planning day:**
+
+```
+Sidebar upload (current):    Advanced Roadmaps_PMV_SW_Dev_20260620.csv   ← merged roadmaps for all squads
+                             Advanced Roadmaps_Perception_20260620.csv
+
+Date Drift tab (baselines):  Advanced Roadmaps_PMV_SW_Dev_17062026.csv   ← PI planning day
+                             Advanced Roadmaps_Perception_17062026.csv   ← PI planning day
+```
+
+The app pairs each baseline with its matching squad in the current data and shows drift side by side.
 
 ---
 
@@ -190,20 +220,22 @@ Upload the **current** (newer) export via the sidebar as usual, then upload the
 
 Export the Roadmaps or snapshot CSV **at the end of PI Planning day**, once all target
 dates have been committed by the teams — not mid-planning while dates are still in flux.
-Save the file somewhere accessible with the date in the filename
-(e.g. `Advanced Roadmaps_PMV_SW_Dev_17062026.csv`). This is your **baseline**.
+Save one file per squad with the date in the filename
+(e.g. `Advanced Roadmaps_PMV_SW_Dev_17062026.csv`). These are your **baselines**.
 
-> The app will try to parse the date from the filename automatically.
+> The app tries to parse the export date from the filename automatically. If the date
+> is in `DDMMYYYY` format at the end of the filename (as Jira typically exports it),
+> it will be pre-filled in the date input.
 
 #### Every sprint thereafter
 
-Export the same CSV at the **end of each sprint** and save it with the date in the
-filename. Upload the latest export as your current file (sidebar) and any older one as
-the baseline.
+Export the same CSV(s) at the **end of each sprint** and save with the date in the
+filename. Upload the latest exports as your current files (sidebar) and any older ones
+as the baselines.
 
 | Exports available | What you get |
 |-------------------|-------------|
-| 2 snapshots (baseline + now) | Snapshot comparison — total drift, worst items, squad breakdown |
+| 2 snapshots per squad (baseline + now) | Snapshot comparison — total drift, worst items, per-squad breakdown |
 | 3+ snapshots | All of the above + **Drift Velocity** chart showing whether drift is accelerating or slowing |
 | 5+ snapshots (full PI) | Reliable drift rate → **Adjusted Forecast** showing where items will *actually* land |
 
@@ -212,14 +244,14 @@ the baseline.
 ### The three views explained
 
 #### 📸 Snapshot comparison
-Compares the baseline and current export side by side. Shows:
+Compares each baseline against the current export. For each squad shows:
 - How many items have drifted and by how much
 - A colour-coded horizontal bar chart: 🔴 major (>30 d) · 🟠 moderate (8–30 d) · 🟡 minor (1–7 d) · 🔵 pulled in
-- Drift by squad — which team is driving the most extension
-- Drift by hierarchy level — is it Capabilities, Epics, or Stories that are moving?
+- A plain-English paragraph ready to share with a product owner
+- Combined hierarchy table (Capability / Epic / Story) across all squads
 
-A **plain-English summary** at the top explains the numbers in non-technical language and
-suggests three questions to bring to the team.
+When multiple squads are loaded a **programme-level header** shows the combined
+total before the per-squad detail sections.
 
 > **Short measurement window warning:** if your two exports are fewer than 14 days apart,
 > the *drift rate* figure (days of drift per calendar day) will look alarming — dividing
@@ -490,6 +522,18 @@ pytest tests/ --cov=core --cov-report=term-missing   # with coverage
 ---
 
 ## Changelog
+
+### v1.5.1
+- **Date Drift — multi-squad baseline comparison** — the Snapshot Comparison baseline uploader now accepts multiple files (one per squad). The app auto-detects each baseline's squad name from its `Components` column, matches it to the corresponding squad in the current data, shows a combined programme-level header, and renders a separate section per squad with its own metrics, drift chart, and plain-English summary.
+
+### v1.5.0
+- **Fix "undefined" chart title** — the Historical Accuracy scatter chart title rendered as the string "undefined" due to `title=None` in Plotly. Fixed by setting `title_text=""`.
+
+### v1.4.9
+- **Multi-value Components normalisation** — Jira sometimes stores multiple components as a comma-separated string (e.g. `"PMV SW Dev, PMV_SW"`). The app now splits these and returns the most common single value, eliminating spurious combined-name rows in the Drift by Squad table.
+
+### v1.4.8
+- **README — comprehensive Date Drift user guide** added covering: what drift is, which file types work, recommended PI planning workflow, cadence table, explanation of all three sub-tabs, short-window rate warning, product owner talking points, and "what good looks like" reference table.
 
 ### v1.4.7
 - **Date Drift — plain-English product owner summary** — the Snapshot Comparison tab now opens a "How to explain this to your product owner" box automatically, with a plain-English paragraph, average drift in sprints, and three suggested team questions. When the measurement window is < 14 days a warning explains that the rate figure is a mathematical artefact and directs attention to the absolute numbers instead.
