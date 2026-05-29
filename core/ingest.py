@@ -170,6 +170,47 @@ def _parse_first_sprint(sprint_str: str | None) -> str:
     )
 
 
+def _normalise_squad_series(series: pd.Series) -> pd.Series:
+    """
+    Jira sometimes exports the Components field as a comma-separated list
+    when an item is tagged with multiple components (e.g. "PMV SW Dev, PMV_SW").
+    This function normalises the series so every cell contains a single squad
+    name by:
+
+      1. Splitting each cell on commas to get individual component values.
+      2. Finding the most common individual value across the whole series —
+         this is the canonical squad/team name (e.g. "PMV SW Dev").
+      3. For each cell, returning the canonical value if it is present in
+         the cell's components; otherwise returning the first component.
+
+    This handles all three real-world patterns seen in Jira exports:
+        "PMV SW Dev"               → "PMV SW Dev"
+        "PMV SW Dev, PMV_SW"       → "PMV SW Dev"
+        "PMV_SW, TMA, PMV SW Dev"  → "PMV SW Dev"
+    """
+    from collections import Counter
+
+    # Collect all individual component values to find the canonical one
+    all_values: list[str] = []
+    for cell in series.dropna():
+        all_values.extend(v.strip() for v in str(cell).split(",") if v.strip())
+
+    if not all_values:
+        return series
+
+    canonical = Counter(all_values).most_common(1)[0][0]
+
+    def _pick(cell: str | float) -> str | None:
+        if pd.isna(cell) or not str(cell).strip():
+            return None
+        parts = [v.strip() for v in str(cell).split(",") if v.strip()]
+        if canonical in parts:
+            return canonical
+        return parts[0] if parts else None
+
+    return series.apply(_pick)
+
+
 def _normalise_blocked(series: pd.Series) -> pd.Series:
     """
     Blocked field may contain 'Impediment', 'Yes', 'True', or be empty.
@@ -309,7 +350,8 @@ def load_roadmaps(path: str | Path, config: AppConfig) -> pd.DataFrame:
         "rm_rag":           _get(rcol.get("rag", "RAG")),
     })
 
-    df["key"] = df["key"].astype(str).str.strip()
+    df["key"]      = df["key"].astype(str).str.strip()
+    df["rm_squad"] = _normalise_squad_series(df["rm_squad"])
     log.info("  Loaded %d rows from roadmaps.", len(df))
     return df
 
@@ -402,6 +444,7 @@ def load_for_drift(path: str | Path, config: AppConfig) -> pd.DataFrame:
 
     n_with_date = df["rm_target_end"].notna().sum()
     log.info("  load_for_drift: %d rows, %d with target date.", len(df), n_with_date)
+    df["rm_squad"] = _normalise_squad_series(df["rm_squad"])
     return df[["key", "hierarchy", "rm_squad", "rm_target_end"]]
 
 
