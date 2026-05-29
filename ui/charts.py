@@ -536,7 +536,7 @@ def plan_accuracy_scatter(records: list) -> go.Figure:
     y_pad = max(y_max * 0.15, 5)
 
     fig.update_layout(
-        title=None,
+        title_text="",
         xaxis_title="Target end date",
         yaxis_title="Slip (days) — positive = late",
         yaxis=dict(
