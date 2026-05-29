@@ -19,7 +19,7 @@ from core.plan_accuracy import (
     sprint_slippage_summary,
 )
 from config.schema import AppConfig
-from core.ingest import load_roadmaps
+from core.ingest import load_roadmaps, load_for_drift
 from ui.charts import plan_accuracy_scatter
 
 _HIERARCHY_ORDER = ["Capability", "Initiative", "Theme", "Epic", "Story",
@@ -356,11 +356,14 @@ def _render_date_drift(config: AppConfig) -> None:
             "| ⚫ | Unchanged |"
         )
 
+    # Accept either a roadmaps CSV (has "Target end date") or a regular Jira
+    # snapshot CSV (uses "Custom field (Target end)" or similar).
     current_rm_df = st.session_state.get("_current_rm_df")
     if current_rm_df is None:
         st.info(
-            "Load the current Advanced Roadmaps CSV via the sidebar first, "
-            "then upload baseline(s) here."
+            "Load the **current** Jira export via the sidebar first "
+            "(either an Advanced Roadmaps CSV or a regular snapshot CSV that "
+            "contains a target end date field), then upload the older baseline here."
         )
         return
 
@@ -376,10 +379,15 @@ def _render_date_drift(config: AppConfig) -> None:
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
         baseline_file = st.file_uploader(
-            "Baseline Roadmaps CSV (original plan)",
+            "Baseline CSV — older Jira export (original plan)",
             type=["csv"],
             key="baseline_roadmaps_upload",
-            help="Export from the start of the PI / sprint when dates were originally set.",
+            help=(
+                "Upload the older export — either an Advanced Roadmaps CSV or a "
+                "regular 'Created vs Resolved' snapshot CSV that includes a target "
+                "end date field (e.g. 'Custom field (Target end)'). "
+                "The app auto-detects the format."
+            ),
         )
         if baseline_file is not None:
             p = tmp_dir / "baseline_roadmaps.csv"
@@ -405,7 +413,7 @@ def _render_date_drift(config: AppConfig) -> None:
         baseline_ts = pd.Timestamp(baseline_date)
 
         try:
-            baseline_rm_df = load_roadmaps(baseline_path, config)
+            baseline_rm_df = load_for_drift(baseline_path, config)
         except Exception as exc:
             st.error(f"Could not read baseline CSV: {exc}")
             return
@@ -564,7 +572,7 @@ def _render_date_drift(config: AppConfig) -> None:
                 path_str = st.session_state.get(f"_vel_snap_path_{i}")
                 if path_str:
                     try:
-                        snap_dfs.append((date_inputs[i], load_roadmaps(path_str, config)))
+                        snap_dfs.append((date_inputs[i], load_for_drift(path_str, config)))
                     except Exception as exc:
                         st.warning(f"Could not read snapshot {i+1}: {exc}")
 

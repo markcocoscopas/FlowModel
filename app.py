@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 import pandas as pd
 
 from config.schema import load_config
-from core.ingest import load_snapshot, load_roadmaps, merge_datasets, apply_filters
+from core.ingest import load_snapshot, load_roadmaps, load_for_drift, merge_datasets, apply_filters
 from ui.sidebar import render_sidebar
 
 import ui.overview      as tab_overview
@@ -149,8 +149,23 @@ def _get_or_load(state: "SidebarState") -> tuple[pd.DataFrame | None, object | N
                 state.snapshot_path, state.roadmaps_path, state.config
             )
             merged = merge_datasets(snap_df, rm_df)
-            st.session_state["_raw_df"]         = merged
-            st.session_state["_current_rm_df"]  = rm_df   # stored for date-drift comparison
+            st.session_state["_raw_df"]        = merged
+            # Store normalised drift-ready df for the Date Drift tab.
+            # For roadmaps uploads rm_df is already in the right format.
+            # For snapshot-only workflows the snapshot itself is used (it may
+            # contain a "Custom field (Target end)" column that load_for_drift
+            # will pick up).  We try roadmaps first; fall back to snapshot.
+            if rm_df is not None:
+                st.session_state["_current_rm_df"] = rm_df
+            else:
+                # Attempt to build a drift-ready df from the snapshot CSVs
+                try:
+                    drift_paths = [state.snapshot_path] if isinstance(state.snapshot_path, str) else state.snapshot_path
+                    drift_frames = [load_for_drift(p, state.config) for p in drift_paths]
+                    drift_combined = pd.concat(drift_frames, ignore_index=True).drop_duplicates(subset=["key"])
+                    st.session_state["_current_rm_df"] = drift_combined
+                except Exception:
+                    st.session_state["_current_rm_df"] = None
             st.session_state["_data_cache_key"] = cache_key
             log.info("Data loaded and cached. %d rows.", len(merged))
         except Exception as exc:

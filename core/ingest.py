@@ -314,6 +314,97 @@ def load_roadmaps(path: str | Path, config: AppConfig) -> pd.DataFrame:
     return df
 
 
+# ── Candidate target-date column names in a regular Jira snapshot export ──────
+# Jira allows many custom field names for "target end date" depending on how
+# the project is configured.  We try them in priority order.
+_SNAPSHOT_TARGET_END_CANDIDATES = [
+    "Custom field (Target end)",
+    "Custom field (Target End Date)",
+    "Custom field (Target Release Date)",
+    "Custom field (End Date)",
+    "Due Date",
+]
+
+
+def load_for_drift(path: str | Path, config: AppConfig) -> pd.DataFrame:
+    """
+    Load any Jira CSV export — either a regular snapshot or an Advanced
+    Roadmaps export — and return a normalised DataFrame suitable for drift
+    comparison with ``date_drift_summary``.
+
+    Output columns: key, rm_target_end, hierarchy, rm_squad
+    (same schema as ``load_roadmaps`` so existing drift logic is reused).
+
+    Auto-detection logic
+    --------------------
+    If the file contains a ``Target end date`` column (the canonical roadmaps
+    column) OR a ``Hierarchy`` column, it is loaded via ``load_roadmaps``.
+    Otherwise it is treated as a snapshot CSV and the first matching column
+    from ``_SNAPSHOT_TARGET_END_CANDIDATES`` is used as the target date.
+
+    Raises ``ValueError`` if no usable target-date column is found.
+    """
+    path = Path(path)
+    raw  = pd.read_csv(path, dtype=str, low_memory=False, nrows=5)  # peek at columns
+    cols = set(raw.columns)
+
+    # ── Roadmaps format ────────────────────────────────────────────────────────
+    if "Target end date" in cols or "Hierarchy" in cols:
+        log.info("load_for_drift: detected roadmaps format — %s", path.name)
+        return load_roadmaps(path, config)
+
+    # ── Snapshot format ───────────────────────────────────────────────────────
+    target_col: str | None = None
+    for candidate in _SNAPSHOT_TARGET_END_CANDIDATES:
+        if candidate in cols:
+            target_col = candidate
+            break
+
+    if target_col is None:
+        # Try a broader re-read with all rows in case the peek missed something
+        raw_full = pd.read_csv(path, dtype=str, low_memory=False)
+        for candidate in _SNAPSHOT_TARGET_END_CANDIDATES:
+            if candidate in raw_full.columns:
+                target_col = candidate
+                raw = raw_full
+                break
+
+    if target_col is None:
+        raise ValueError(
+            f"No target end date column found in '{path.name}'. "
+            f"Expected one of: {_SNAPSHOT_TARGET_END_CANDIDATES} "
+            f"(for a snapshot CSV) or 'Target end date' (for a Roadmaps CSV)."
+        )
+
+    log.info("load_for_drift: snapshot format, using '%s' as target date — %s",
+             target_col, path.name)
+
+    raw_full = pd.read_csv(path, dtype=str, low_memory=False)
+    raw_dd   = _deduplicate_columns(raw_full)
+
+    def _gcol(col_name: str, *fallbacks: str) -> pd.Series:
+        for name in (col_name, *fallbacks):
+            if name in raw_dd.columns:
+                return raw_dd[name]
+        return pd.Series([""] * len(raw_dd), index=raw_dd.index)
+
+    # Squad: Component/s (last non-null after dedup, already handled by _deduplicate_columns)
+    squad_col = config.columns.get("squad", "Component/s")
+
+    df = pd.DataFrame({
+        "key":          _gcol(config.columns.get("id", "Issue key")).astype(str).str.strip(),
+        "hierarchy":    _gcol(config.columns.get("type", "Issue Type")),  # type as hierarchy proxy
+        "rm_squad":     _gcol(squad_col),
+        "rm_target_end": pd.to_datetime(
+                             _gcol(target_col),
+                             errors="coerce", dayfirst=True, format="mixed"),
+    })
+
+    n_with_date = df["rm_target_end"].notna().sum()
+    log.info("  load_for_drift: %d rows, %d with target date.", len(df), n_with_date)
+    return df[["key", "hierarchy", "rm_squad", "rm_target_end"]]
+
+
 def merge_datasets(
     snapshot_df: pd.DataFrame,
     roadmaps_df: pd.DataFrame | None,
