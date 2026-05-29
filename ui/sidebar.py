@@ -181,13 +181,25 @@ def render_sidebar(df: pd.DataFrame | None = None) -> SidebarState:
     if df is not None and not df.empty:
         # Build squad list from team-level work items only.
         # Epics and Capabilities are often tagged with product-area Component/s
-        # values (e.g. "TMA", "Towing & Hitching") rather than team names, which
-        # would otherwise pollute the squad dropdown with feature names.
+        # values rather than team names, which would pollute the dropdown.
         _TEAM_TYPES = {"Story", "Bug", "Task", "Spike", "Sub-task"}
         _squad_src  = df[df["type"].isin(_TEAM_TYPES)]
-        if _squad_src.empty:           # fall back to full df if no team-level items
+        if _squad_src.empty:
             _squad_src = df
-        available_squads = sorted(_squad_src["squad"].dropna().unique().tolist())
+
+        # Filter by minimum item count: only show a squad name if it appears on
+        # enough items to be a real team, not a label or product-area component.
+        # Threshold = max(5, 5% of team-level items).  This removes noise values
+        # like "PMV_SW" (label) or "TMA" (product area) that appear on only a
+        # handful of items while keeping every genuine squad name.
+        _total       = max(len(_squad_src), 1)
+        _min_count   = max(5, int(_total * 0.05))
+        _squad_counts = _squad_src["squad"].dropna().value_counts()
+        available_squads = sorted(
+            _squad_counts[_squad_counts >= _min_count].index.tolist()
+        )
+        if not available_squads:          # safety: if threshold too strict, show all
+            available_squads = sorted(_squad_src["squad"].dropna().unique().tolist())
         available_types  = sorted(df["type"].dropna().unique().tolist())
 
         st.sidebar.subheader("🏃 Filters")
