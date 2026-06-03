@@ -192,14 +192,28 @@ def render_sidebar(df: pd.DataFrame | None = None) -> SidebarState:
         # Threshold = max(5, 5% of team-level items).  This removes noise values
         # like "PMV_SW" (label) or "TMA" (product area) that appear on only a
         # handful of items while keeping every genuine squad name.
-        _total       = max(len(_squad_src), 1)
-        _min_count   = max(5, int(_total * 0.05))
-        _squad_counts = _squad_src["squad"].dropna().value_counts()
+        _total        = max(len(_squad_src), 1)
+        _min_count    = max(5, int(_total * 0.05))
+        _squad_counts = (
+            _squad_src["squad"]
+            .dropna()
+            .loc[lambda s: s.str.strip().str.lower() != "none"]   # exclude "None" string
+            .loc[lambda s: s.str.strip() != ""]
+            .value_counts()
+        )
         available_squads = sorted(
             _squad_counts[_squad_counts >= _min_count].index.tolist()
         )
         if not available_squads:          # safety: if threshold too strict, show all
-            available_squads = sorted(_squad_src["squad"].dropna().unique().tolist())
+            available_squads = sorted(
+                _squad_src["squad"]
+                .dropna()
+                .loc[lambda s: s.str.strip().str.lower() != "none"]
+                .unique().tolist()
+            )
+        # Publish to session state so app.py can use the same list for the
+        # squad view radio — keeps both controls in sync.
+        st.session_state["_valid_squads"] = available_squads
         available_types  = sorted(df["type"].dropna().unique().tolist())
 
         st.sidebar.subheader("🏃 Filters")

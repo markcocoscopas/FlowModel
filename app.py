@@ -214,9 +214,22 @@ def main() -> None:
         return
 
     # ── Squad view selector ───────────────────────────────────────────────────
-    # When multiple squads are loaded, show a quick-select bar above the tabs.
-    # The Compare Squads tab always receives the full dataset regardless.
-    squads_loaded = sorted(filtered_df["squad"].dropna().unique().tolist())
+    # Use the same valid-squad list computed by the sidebar (threshold-filtered,
+    # "None"-excluded) so the radio and the dropdown always show the same squads.
+    _valid_squads = st.session_state.get("_valid_squads") or []
+    squads_in_data = sorted(
+        filtered_df["squad"]
+        .dropna()
+        .loc[lambda s: s.str.strip().str.lower() != "none"]
+        .unique()
+        .tolist()
+    )
+    # Keep only squads that are both in the data AND in the valid list.
+    # Fall back to all squads in data if the valid list is empty (e.g. first run).
+    squads_loaded = (
+        [s for s in squads_in_data if s in _valid_squads]
+        if _valid_squads else squads_in_data
+    )
     if len(squads_loaded) > 1:
         view_options = ["📊 All Squads"] + squads_loaded
         selected_view = st.radio(
