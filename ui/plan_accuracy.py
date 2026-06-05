@@ -139,7 +139,7 @@ _OK_COLOUR       = "#009E73"   # green
 
 # ── Delivery Risk helper ──────────────────────────────────────────────────────
 
-def _render_delivery_risk(df: pd.DataFrame, title_prefix: str = "") -> None:
+def _render_delivery_risk(df: pd.DataFrame, title_prefix: str = "", chart_key: str = "all") -> None:
     """
     Render the in-flight delivery risk section.
     Shows items that have a target end date but are not yet resolved.
@@ -219,7 +219,7 @@ def _render_delivery_risk(df: pd.DataFrame, title_prefix: str = "") -> None:
         plot_bgcolor="white",
         xaxis=dict(gridcolor="#e8e8e8", zeroline=False),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"delivery_risk_chart_{chart_key}")
     st.caption(
         "🔴 Overdue (past target) · 🟠 At risk (≤14 days) · 🟢 On track  |  "
         "Dashed line = today, dotted = 14-day warning threshold."
@@ -285,7 +285,7 @@ def _parse_date_from_filename(name: str) -> "pd.Timestamp | None":
     return None
 
 
-def _drift_bar_chart(records: pd.DataFrame, label: str = "") -> None:
+def _drift_bar_chart(records: pd.DataFrame, label: str = "", chart_key: str = "0") -> None:
     """Render the horizontal drift bar chart for a set of records."""
     show = records[records["drift_days"] != 0].head(50)
     if show.empty:
@@ -324,7 +324,7 @@ def _drift_bar_chart(records: pd.DataFrame, label: str = "") -> None:
         plot_bgcolor="white",
         xaxis=dict(gridcolor="#e8e8e8", zeroline=False),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"drift_bar_{chart_key}")
     if len(records[records["drift_days"] != 0]) > 50:
         st.caption("Showing top 50 items. See the detail table below for the full list.")
 
@@ -547,7 +547,8 @@ def _render_date_drift(config: AppConfig) -> None:
                     )
 
                 st.divider()
-                _drift_bar_chart(drift["records"], label=squad_name if len(results) > 1 else "")
+                _drift_bar_chart(drift["records"], label=squad_name if len(results) > 1 else "",
+                                 chart_key=squad_name.replace(" ", "_").lower())
 
             if len(results) > 1:
                 st.divider()
@@ -691,7 +692,7 @@ def _render_date_drift(config: AppConfig) -> None:
             plot_bgcolor="white",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         )
-        st.plotly_chart(fig_v, use_container_width=True)
+        st.plotly_chart(fig_v, use_container_width=True, key="drift_velocity_chart")
         st.caption(
             "🔴 Total drift days (left axis) — how far dates have moved in aggregate. "
             "🟠 Items drifted (right axis) — how many items have moved at all. "
@@ -798,7 +799,7 @@ def _render_date_drift(config: AppConfig) -> None:
             xaxis=dict(gridcolor="#eeeeee"),
             yaxis=dict(gridcolor="#eeeeee"),
         )
-        st.plotly_chart(fig_adj, use_container_width=True)
+        st.plotly_chart(fig_adj, use_container_width=True, key="drift_adjusted_chart")
         st.caption(
             "Each bubble is one in-flight item. Bubble size = days remaining. "
             "Colour = expected additional drift. Items in the top-right are both "
@@ -865,7 +866,7 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
     with overall_tab:
 
         # Section 1: In-flight delivery risk (always shown when roadmaps CSV loaded)
-        _render_delivery_risk(df)
+        _render_delivery_risk(df, chart_key="overall")
 
         st.divider()
 
@@ -907,7 +908,7 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
             st.divider()
 
             fig = plan_accuracy_scatter(records)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="plan_accuracy_scatter_overall")
             st.caption(
                 "Colours: 🟢 on time (within ±3 days), 🔴 late, 🔵 early. "
                 "Dashed lines show the ±3-day tolerance band."
@@ -960,7 +961,8 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
         # Delivery risk per squad
         for squad in squads:
             sdf = df[df["squad"] == squad]
-            _render_delivery_risk(sdf, title_prefix=f"{squad} — ")
+            _render_delivery_risk(sdf, title_prefix=f"{squad} — ",
+                                  chart_key=squad.replace(" ", "_").lower())
             st.divider()
 
         # Epic/Capability progress (all squads combined — roadmaps is cross-squad)
@@ -1056,7 +1058,7 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
                 hovermode="closest",
                 yaxis_title="Slip (days)",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="plan_accuracy_scatter_by_squad")
 
         # Sprint slippage per squad
         st.divider()
