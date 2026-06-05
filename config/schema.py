@@ -103,8 +103,26 @@ def load_config(path: str | Path | None = None) -> AppConfig:
 
 
 def load_config_from_dict(raw: dict[str, Any]) -> AppConfig:
-    """Parse and validate an already-loaded dict (useful for tests)."""
-    return _parse(raw)
+    """Parse a partial config dict, merging with defaults for any missing keys.
+
+    This allows users to upload a minimal YAML (e.g. just wip_limits) without
+    having to repeat all the column mappings from the default config.
+    """
+    import copy
+    with _DEFAULT_CONFIG_PATH.open(encoding="utf-8") as fh:
+        defaults: dict[str, Any] = yaml.safe_load(fh)
+
+    def _deep_merge(base: dict, override: dict) -> dict:
+        result = copy.deepcopy(base)
+        for k, v in override.items():
+            if isinstance(v, dict) and isinstance(result.get(k), dict):
+                result[k] = _deep_merge(result[k], v)
+            else:
+                result[k] = v
+        return result
+
+    merged = _deep_merge(defaults, raw)
+    return _parse(merged)
 
 
 def _parse(raw: dict[str, Any]) -> AppConfig:
