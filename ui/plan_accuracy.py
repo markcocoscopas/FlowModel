@@ -879,6 +879,8 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
         st.subheader("Historical Accuracy — Completed Items")
         records = plan_accuracy_records(df)
 
+        _MIN_ACCURACY_ITEMS = 5   # below this, stats are not meaningful
+
         if not records:
             st.info(
                 "No completed items have a target end date yet — "
@@ -887,6 +889,23 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
                 "items only, re-export it to include **Done** items so past accuracy "
                 "can be measured."
             )
+        elif len(records) < _MIN_ACCURACY_ITEMS:
+            st.info(
+                f"Only **{len(records)} completed item(s)** have a target end date — "
+                f"at least **{_MIN_ACCURACY_ITEMS}** are needed for meaningful accuracy stats.\n\n"
+                "This section will populate as more items are resolved against roadmap targets. "
+                "If you are at the start of a PI, come back at the end of the first sprint."
+            )
+            # Still show the raw detail table so the data isn't hidden entirely
+            with st.expander(f"📋 Show {len(records)} item(s) anyway"):
+                rows = [{
+                    "Key":          r.key,
+                    "Title":        r.title,
+                    "Target end":   str(r.target_end)[:10] if r.target_end else "",
+                    "Resolved":     str(r.resolved)[:10]   if r.resolved   else "",
+                    "Slip (days)":  r.slip_days,
+                } for r in sorted(records, key=lambda r: r.slip_days, reverse=True)]
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         else:
             summary = plan_accuracy_summary(records)
 
@@ -973,10 +992,14 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
         # Historical accuracy summary table
         st.subheader("Historical Accuracy by Squad")
         pa_rows = []
+        pa_low_data = []   # squads with data but below threshold
         for squad in squads:
             sdf     = df[df["squad"] == squad]
             records = plan_accuracy_records(sdf)
             if not records:
+                continue
+            if len(records) < _MIN_ACCURACY_ITEMS:
+                pa_low_data.append((squad, len(records)))
                 continue
             s    = plan_accuracy_summary(records)
             slip = sprint_slippage_summary(sdf)
@@ -991,12 +1014,20 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
                 "Sprint slip %":   f"{slip.get('pct_slipped', '—')}%" if slip else "—",
             })
 
-        if not pa_rows:
+        if pa_low_data:
+            names = ", ".join(f"{sq} ({n})" for sq, n in pa_low_data)
             st.info(
-                "No completed items have a target end date yet. "
-                "Historical accuracy will appear here once resolved items with "
-                "target dates exist in the data."
+                f"Not enough completed items yet for: **{names}**. "
+                f"Need at least {_MIN_ACCURACY_ITEMS} per squad — stats will appear as items are resolved."
             )
+
+        if not pa_rows:
+            if not pa_low_data:
+                st.info(
+                    "No completed items have a target end date yet. "
+                    "Historical accuracy will appear here once resolved items with "
+                    "target dates exist in the data."
+                )
         else:
             st.dataframe(pd.DataFrame(pa_rows), use_container_width=True, hide_index=True)
             st.caption("Median slip: positive = late on average, negative = early on average.")
