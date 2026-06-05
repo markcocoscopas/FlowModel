@@ -85,6 +85,29 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
         )
         if any(config.wip_limits.get(s, 999) < v for s, v in wip_display.items()):
             st.caption("⚠️ Highlighted rows exceed the configured WIP limit.")
+
+        # ── Ticket drill-down ─────────────────────────────────────────────────
+        in_flight = df[df["resolved"].isna() & df["created"].notna()].copy()
+        if not in_flight.empty:
+            today = pd.Timestamp.now().normalize()
+            in_flight["Age (days)"] = (today - in_flight["created"]).dt.days
+
+            with st.expander("📋 View in-flight tickets", expanded=False):
+                cols = {}
+                for c, label in [
+                    ("key",    "Key"),
+                    ("title",  "Title"),
+                    ("type",   "Type"),
+                    ("squad",  "Squad"),
+                    ("status", "Status"),
+                ]:
+                    if c in in_flight.columns:
+                        cols[c] = label
+                cols["Age (days)"] = "Age (days)"
+
+                display = in_flight[list(cols.keys())].rename(columns=cols)
+                display = display.sort_values("Age (days)", ascending=False)
+                st.dataframe(display, use_container_width=True, hide_index=True)
     else:
         st.info("No in-flight items.")
 
