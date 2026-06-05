@@ -72,16 +72,24 @@ def _render_epic_progress(df: pd.DataFrame) -> None:
     )
 
     today = pd.Timestamp.now().normalize()
+    _DONE_STATUSES = {"done", "closed", "resolved", "complete", "completed", "released"}
 
     rows = []
     for _, row in epics_df.iterrows():
         target_end = row.get("rm_target_end")
+        resolved   = row.get("resolved")
+        status_str = _s(row.get("status")).strip().lower()
+        is_done    = status_str in _DONE_STATUSES or pd.notna(resolved)
+
         if pd.isna(target_end):
             days_rem = None
             due_str  = "—"
         else:
-            days_rem = int((target_end - today).total_seconds() // 86400)
-            due_str  = target_end.strftime("%d %b %Y")
+            due_str = target_end.strftime("%d %b %Y")
+            if is_done:
+                days_rem = None   # don't use today-vs-target for completed items
+            else:
+                days_rem = int((target_end - today).total_seconds() // 86400)
 
         progress = row.get("rm_progress_pct")
         done_ic  = row.get("rm_done_ic")
@@ -91,7 +99,19 @@ def _render_epic_progress(df: pd.DataFrame) -> None:
 
         hier = _s(row.get("hierarchy")) or _s(row.get("type"))
 
-        if days_rem is None:
+        if is_done:
+            # Show delivery outcome: was it on time, late, or early?
+            if pd.notna(resolved) and pd.notna(target_end):
+                slip = (resolved - target_end).total_seconds() / 86400
+                if abs(slip) <= 3:
+                    risk_label = "✅ On time"
+                elif slip > 0:
+                    risk_label = f"🔴 {int(slip)}d late"
+                else:
+                    risk_label = f"🔵 {int(abs(slip))}d early"
+            else:
+                risk_label = "✅ Done"
+        elif days_rem is None:
             risk_label = "—"
         elif days_rem < 0:
             risk_label = f"🔴 {abs(days_rem)}d overdue"
