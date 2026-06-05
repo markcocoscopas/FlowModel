@@ -298,9 +298,9 @@ jobs:
           AppName=Squad Flow Metrics
           AppVersion=$ver
           AppPublisher=Squad Flow Metrics
-          AppPublisherURL=https://github.com/markcocoscopas/squad-flow-metrics
-          AppSupportURL=https://github.com/markcocoscopas/squad-flow-metrics/issues
-          AppUpdatesURL=https://github.com/markcocoscopas/squad-flow-metrics/releases
+          AppPublisherURL=https://github.com/markcocoscopas/FlowModel
+          AppSupportURL=https://github.com/markcocoscopas/FlowModel/issues
+          AppUpdatesURL=https://github.com/markcocoscopas/FlowModel/releases
           DefaultDirName={localappdata}\SquadFlowMetrics
           DefaultGroupName=Squad Flow Metrics
           AllowNoIcons=yes

@@ -24,7 +24,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-GITHUB_REPO  = "markcocoscopas/squad-flow-metrics"
+GITHUB_REPO  = "markcocoscopas/FlowModel"
 GITHUB_API   = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 APP_ROOT     = Path(__file__).parent.parent
 VERSION_FILE = APP_ROOT / "version.txt"
