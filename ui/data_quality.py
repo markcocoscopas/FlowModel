@@ -52,8 +52,14 @@ def render(report: DataQualityReport | None, config: AppConfig, df: pd.DataFrame
     with st.expander("📋 How the score is calculated", expanded=score < 70):
         ct_pct = report.pct_contributing_cycle_time
         ct_pts = min(60.0, ct_pct * 0.6)
-        excl_pct = round(100 * report.rows_excluded / max(report.total_rows_read, 1), 1)
-        excl_pts = 20.0 if excl_pct < 5 else (10.0 if excl_pct < 20 else 0.0)
+        state_excl = sum(
+            v for k, v in report.exclusion_reasons.items()
+            if k.startswith("Excluded workflow state")
+        )
+        filter_excl     = max(0, report.rows_excluded - state_excl)
+        excl_pct        = round(100 * report.rows_excluded / max(report.total_rows_read, 1), 1)
+        filter_excl_pct = round(100 * filter_excl / max(report.total_rows_read, 1), 1)
+        excl_pts = 20.0 if filter_excl_pct < 5 else (10.0 if filter_excl_pct < 20 else 0.0)
         blocked_pts = 10.0 if report.has_blocked_flag > 0 else 0.0
         plan_pts = 10.0 if report.has_target_end > 0 else 0.0
 
@@ -69,10 +75,11 @@ def render(report: DataQualityReport | None, config: AppConfig, df: pd.DataFrame
             f"your data has already been delivered. Cycle time, throughput, and Monte Carlo forecasts "
             f"are calculated from these items. In-flight items contribute to WIP and ageing only. |\n"
             f"| **Low exclusion rate** | {excl_pts:.0f} | 20 | "
-            f"{_tick(excl_pts, 20)} **{excl_pct}% of rows were excluded** — "
-            f"rows are excluded by workflow state (e.g. Funnel, To Do), "
-            f"type filter, squad filter, or date range. A high exclusion rate (>20%) usually means "
-            f"the filters are too narrow, or many items are in pre-work states. |\n"
+            f"{_tick(excl_pts, 20)} **{excl_pct}% of rows excluded in total** "
+            f"({state_excl} by workflow state e.g. Funnel/To Do — expected and not penalised; "
+            f"{filter_excl} by type/squad/date filter). "
+            f"A high *filter* exclusion rate (>{filter_excl_pct}% shown here) usually means "
+            f"the filters are too narrow. Pre-work state exclusions are intentional and do not affect this score. |\n"
             f"| **Blocked flag data present** | {blocked_pts:.0f} | 10 | "
             f"{_tick(blocked_pts, 10)} "
             f"{'**Blocked custom field is populated** — the Constraints tab can identify blocked items and estimate lost time.' if blocked_pts else '**Blocked field not found** — the `Custom field (Blocked)` column is empty or absent. The Constraints tab will only detect items in the *Blocked* workflow state, not those flagged via the custom field.'} |\n"

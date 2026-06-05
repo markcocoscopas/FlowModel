@@ -98,10 +98,18 @@ def quality_score(report: DataQualityReport) -> float:
     score += min(60.0, ct_pct * 0.6)
 
     # Low exclusion rate (0–20)
-    excl_pct = 100 * report.rows_excluded / max(report.total_rows_read, 1)
-    if excl_pct < 5:
+    # Only penalise for filter-driven exclusions (type, squad, date range).
+    # Workflow-state exclusions (Funnel, To Do, Cancelled etc.) are intentional
+    # pre-work filtering and should not reduce the score.
+    state_excluded = sum(
+        v for k, v in report.exclusion_reasons.items()
+        if k.startswith("Excluded workflow state")
+    )
+    filter_excluded = max(0, report.rows_excluded - state_excluded)
+    filter_excl_pct = 100 * filter_excluded / max(report.total_rows_read, 1)
+    if filter_excl_pct < 5:
         score += 20.0
-    elif excl_pct < 20:
+    elif filter_excl_pct < 20:
         score += 10.0
 
     # Blocked flag presence (0–10)
