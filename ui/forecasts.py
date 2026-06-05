@@ -13,7 +13,7 @@ from ui.charts import mc_histogram
 
 
 def render(df: pd.DataFrame, config: AppConfig, n_sims: int = 10_000,
-           mc_window_weeks: int = 12) -> None:
+           mc_window_weeks: int = 12, capacity_pct: int = 80) -> None:
     st.header("Forecasts")
 
     with st.expander("ℹ️ What this tells you", expanded=False):
@@ -25,6 +25,9 @@ def render(df: pd.DataFrame, config: AppConfig, n_sims: int = 10_000,
             "An 85% confidence result means 85% of simulations completed at least that many items.\n\n"
             "**'When'** — given a backlog size, when will it be complete? "
             "An 85% result means 85% of simulations finished within that many weeks.\n\n"
+            "**Squad capacity** scales the throughput samples to reflect that not all team "
+            "time goes to feature delivery — ceremonies, unplanned work, and overhead reduce "
+            "effective capacity. 80% means the team delivers at 80% of raw throughput.\n\n"
             "Results are distributions, not commitments. The wider the spread, "
             "the less predictable your throughput."
         )
@@ -38,15 +41,35 @@ def render(df: pd.DataFrame, config: AppConfig, n_sims: int = 10_000,
         st.warning("No resolved items found — cannot run a forecast without throughput data.")
         return
 
-    samples = throughput_samples(weekly, window_weeks=mc_window_weeks)
-    conf_levels = config.monte_carlo.confidence_levels
+    raw_samples = throughput_samples(weekly, window_weeks=mc_window_weeks)
+    conf_levels  = config.monte_carlo.confidence_levels
+
+    # Apply capacity adjustment — scale each weekly throughput sample
+    factor  = capacity_pct / 100.0
+    samples = [max(0, round(s * factor)) for s in raw_samples]
+
+    raw_mean  = sum(raw_samples) / max(len(raw_samples), 1)
+    adj_mean  = sum(samples)     / max(len(samples), 1)
+    capacity_note = (
+        f" · **{capacity_pct}% capacity** applied "
+        f"(raw mean {raw_mean:.1f} → adjusted mean **{adj_mean:.1f}** items/week)"
+        if capacity_pct != 100 else ""
+    )
 
     st.info(
         f"Sampling from last **{mc_window_weeks} weeks** of throughput. "
-        f"Mean: **{sum(samples)/len(samples):.1f} items/week**, "
+        f"Adjusted mean: **{adj_mean:.1f} items/week**, "
         f"Range: **{min(samples)}–{max(samples)}**. "
         f"Running **{n_sims:,}** simulations."
+        + capacity_note
     )
+
+    if all(s == 0 for s in samples):
+        st.warning(
+            f"⚠️ At {capacity_pct}% capacity the adjusted throughput rounds to zero "
+            f"for all weeks — increase the capacity % or use a longer throughput window."
+        )
+        return
 
     tab1, tab2, tab3 = st.tabs(["How Many?", "When?", "Risk-Adjusted When?"])
 

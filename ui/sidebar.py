@@ -32,6 +32,7 @@ class SidebarState:
     date_to:   pd.Timestamp | None   = None
     n_sims:    int                   = 10_000
     mc_window_weeks: int             = 12
+    capacity_pct:    int             = 80
     refreshed: bool                  = False
 
 
@@ -263,6 +264,17 @@ def render_sidebar(df: pd.DataFrame | None = None) -> SidebarState:
         min_value=4, max_value=52, value=12, step=1,
         key="mc_window",
         help="How many weeks of historical throughput to use for MC sampling.",
+    )
+    state.capacity_pct = st.sidebar.slider(
+        "Squad capacity (%)",
+        min_value=10, max_value=100, value=80, step=5,
+        key="capacity_pct",
+        help=(
+            "Percentage of sprint capacity available for feature delivery after "
+            "accounting for ceremonies, unplanned work, and overhead. "
+            "80% means the team delivers at 80% of their raw throughput rate. "
+            "Scales the throughput samples before running simulations."
+        ),
     )
 
     # ── Refresh ───────────────────────────────────────────────────────────────

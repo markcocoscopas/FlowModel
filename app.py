@@ -273,6 +273,7 @@ def main() -> None:
             display_df, config,
             n_sims=sidebar_state.n_sims,
             mc_window_weeks=sidebar_state.mc_window_weeks,
+            capacity_pct=sidebar_state.capacity_pct,
         )
     with tabs[5]:
         tab_constraints.render(display_df, config)
