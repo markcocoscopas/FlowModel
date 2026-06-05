@@ -270,6 +270,24 @@ def load_snapshot(path: str | Path, config: AppConfig) -> pd.DataFrame:
     df["created"]  = _safe_parse_dates(_get(col["created"]),  config.date_format)
     df["resolved"] = _safe_parse_dates(_get(col["resolved"]), config.date_format)
 
+    # Pick up target end date if it exists on the ticket itself (set as part of DoR).
+    # Try the config value first, then fall back through the standard candidate names.
+    _target_candidates = [
+        col.get("target_end", ""),
+        "Custom field (Target end)",
+        "Custom field (Target End Date)",
+        "Custom field (Target Release Date)",
+        "Custom field (End Date)",
+        "Due Date",
+        "Target end date",
+    ]
+    _target_col = next((c for c in _target_candidates if c and c in raw.columns), None)
+    if _target_col:
+        df["rm_target_end"] = _safe_parse_dates(raw[_target_col], config.date_format)
+        log.info("  Snapshot target end date read from '%s'.", _target_col)
+    else:
+        df["rm_target_end"] = pd.NaT
+
     # Derived sprint columns
     df["sprint_first"]            = df["sprint_raw"].apply(_parse_first_sprint)
     df["sprint_last_completed"]   = df["sprint_raw"].apply(_parse_last_completed_sprint)
@@ -466,6 +484,14 @@ def merge_datasets(
         how="left",
         suffixes=("", "_rm"),
     )
+
+    # If snapshot already carried rm_target_end (read from ticket's custom field)
+    # AND roadmaps also provided one, prefer the roadmaps value but fall back to
+    # the snapshot value where the roadmaps has NaT.
+    if "rm_target_end_rm" in merged.columns:
+        merged["rm_target_end"] = merged["rm_target_end_rm"].fillna(merged["rm_target_end"])
+        merged.drop(columns=["rm_target_end_rm"], inplace=True)
+
     log.info(
         "  Merged: %d snapshot rows, %d roadmaps rows → %d merged rows.",
         len(snapshot_df), len(roadmaps_df), len(merged),
