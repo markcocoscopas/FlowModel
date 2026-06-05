@@ -286,8 +286,7 @@ def render_sidebar(df: pd.DataFrame | None = None) -> SidebarState:
             key=f"wip_{wip_state}",
             help=f"WIP limit for '{wip_state}'. Set to 0 for no limit.",
         )
-        if val > 0:
-            overrides[wip_state] = val
+        overrides[wip_state] = val   # 0 = "remove this limit" — always record
     state.wip_limit_overrides = overrides
 
     # ── Monte Carlo settings ──────────────────────────────────────────────────
