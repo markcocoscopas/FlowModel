@@ -881,6 +881,29 @@ def render(df: pd.DataFrame, config: AppConfig) -> None:
 
         _MIN_ACCURACY_ITEMS = 5   # below this, stats are not meaningful
 
+        # ── Diagnostic expander ───────────────────────────────────────────────
+        with st.expander("🔍 Why are so few items showing? (data diagnostics)", expanded=False):
+            n_resolved      = int(df["resolved"].notna().sum()) if "resolved" in df.columns else 0
+            n_has_target    = int(df["rm_target_end"].notna().sum()) if "rm_target_end" in df.columns else 0
+            n_both          = int((df["resolved"].notna() & df["rm_target_end"].notna()).sum()) \
+                              if "resolved" in df.columns and "rm_target_end" in df.columns else 0
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Resolved items (snapshot)", n_resolved)
+            col2.metric("Items with roadmap target date", n_has_target)
+            col3.metric("Resolved + target date (eligible)", n_both)
+
+            st.markdown(
+                "**Historical accuracy only counts items that appear in BOTH the snapshot CSV "
+                "(with a resolved date) AND the roadmaps CSV (with a target end date).**\n\n"
+                "Common reasons for low matches:\n"
+                "- Jira Advanced Roadmaps exports only **active** items — completed items are "
+                "dropped from the export automatically. You may need to change the Roadmaps "
+                "view filter to include Done/Resolved items before exporting.\n"
+                "- The issue **keys** in the two CSVs don't match (e.g. different projects).\n"
+                "- Roadmaps items don't have a *Target end date* set."
+            )
+
         if not records:
             st.info(
                 "No completed items have a target end date yet — "
