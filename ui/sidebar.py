@@ -33,6 +33,7 @@ class SidebarState:
     n_sims:    int                   = 10_000
     mc_window_weeks: int             = 12
     capacity_pct:    int             = 80
+    wip_limit_overrides: dict        = field(default_factory=dict)
     refreshed: bool                  = False
 
 
@@ -250,6 +251,44 @@ def render_sidebar(df: pd.DataFrame | None = None) -> SidebarState:
 
         state.selected_squads = selected_squads
         state.selected_types  = selected_types
+
+    # ── WIP limits ───────────────────────────────────────────────────────────
+    st.sidebar.subheader("🚦 WIP Limits")
+    st.sidebar.caption("Set to 0 to remove a limit.")
+
+    # Decide which states to show controls for:
+    # states that have a configured limit OR appear in the current data's WIP.
+    _wip_states: list[str] = []
+    if state.config:
+        _wip_states = list(state.config.wip_limits.keys())
+    if df is not None and not df.empty and "status" in df.columns:
+        _active = (
+            df[df["resolved"].isna()]["status"]
+            .dropna()
+            .loc[lambda s: s.str.strip() != ""]
+            .value_counts()
+            .index.tolist()
+        )
+        for s in _active:
+            if s not in _wip_states:
+                _wip_states.append(s)
+
+    overrides: dict[str, int] = {}
+    for wip_state in _wip_states:
+        default_limit = (state.config.wip_limits.get(wip_state, 0)
+                         if state.config else 0)
+        val = st.sidebar.number_input(
+            wip_state,
+            min_value=0,
+            max_value=999,
+            value=int(st.session_state.get(f"wip_{wip_state}", default_limit)),
+            step=1,
+            key=f"wip_{wip_state}",
+            help=f"WIP limit for '{wip_state}'. Set to 0 for no limit.",
+        )
+        if val > 0:
+            overrides[wip_state] = val
+    state.wip_limit_overrides = overrides
 
     # ── Monte Carlo settings ──────────────────────────────────────────────────
     st.sidebar.subheader("🎲 Forecast Settings")

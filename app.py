@@ -205,6 +205,16 @@ def main() -> None:
 
     config = sidebar_state.config
 
+    # Apply sidebar WIP limit overrides on top of the config defaults.
+    # We mutate a copy so the original config object is not shared-state.
+    if sidebar_state.wip_limit_overrides and config is not None:
+        import copy
+        config = copy.copy(config)
+        merged_limits = dict(config.wip_limits)
+        merged_limits.update(sidebar_state.wip_limit_overrides)
+        # Zero means "remove limit" — drop those keys
+        config.wip_limits = {k: v for k, v in merged_limits.items() if v > 0}
+
     # No data yet — show welcome
     if filtered_df is None or filtered_df.empty:
         if sidebar_state.snapshot_path:
