@@ -35,7 +35,7 @@ throughput and cycle time, not story-point velocity.
 ## Download (Windows — no Python required)
 
 > **Just want to run it on Windows?**
-> Go to the [**Releases page**](https://github.com/markcocoscopas/squad-flow-metrics/releases/latest),
+> Go to the [**Releases page**](https://github.com/markcocoscopas/FlowModel/releases/latest),
 > download the **Setup.exe** installer, and run it. No Python, no admin rights, no setup.
 > Launch from the Start Menu shortcut afterwards.
 > Close the app (black command window) before installing an upgrade.
@@ -47,7 +47,7 @@ throughput and cycle time, not story-point velocity.
 ### macOS / Linux
 
 ```bash
-git clone https://github.com/markcocoscopas/squad-flow-metrics.git
+git clone https://github.com/markcocoscopas/FlowModel.git
 cd squad-flow-metrics
 ./run.sh
 ```
@@ -59,7 +59,7 @@ cd squad-flow-metrics
 > tick **"Add Python to PATH"** — without this, the launcher cannot find Python.
 
 ```
-git clone https://github.com/markcocoscopas/squad-flow-metrics.git
+git clone https://github.com/markcocoscopas/FlowModel.git
 cd squad-flow-metrics
 run.bat
 ```
@@ -323,8 +323,12 @@ Useful follow-up questions to bring to the team:
 The default config (`config/default_config.yaml`) is pre-set for the standard
 Jira export format. If your Jira instance uses different field names, workflow
 states, or WIP limits, create a custom YAML and upload it via the **⚙️ Configuration**
-uploader in the sidebar. You only need to include the sections you want to override —
-everything else falls back to the defaults.
+uploader in the sidebar.
+
+> **You only need to include the sections you want to override** — the app deep-merges
+> your file on top of the defaults, so a one-line YAML with just `wip_limits` is
+> perfectly valid. You do not need to repeat column names or workflow states if those
+> haven't changed.
 
 ### Common customisations
 
@@ -523,6 +527,36 @@ pytest tests/ --cov=core --cov-report=term-missing   # with coverage
 
 ## Changelog
 
+### v1.5.11
+- **Partial custom config YAML** — uploading a minimal YAML (e.g. just `wip_limits`) no longer errors with "missing required column keys". The app now deep-merges the uploaded file on top of the defaults, so you only need to include the sections you want to change.
+
+### v1.5.10
+- **Done epics show delivery outcome, not "overdue"** — Epic/Capability Progress table now shows `✅ On time`, `🔴 Xd late`, or `🔵 Xd early` for completed items instead of comparing today's date against a past target end date.
+
+### v1.5.9
+- **Target end date read directly from snapshot CSV** — if your team sets target end dates on tickets as part of the Definition of Ready, the app now picks them up automatically from the snapshot export (`Custom field (Target end)`, `Custom field (Target End Date)`, `Custom field (Target Release Date)`, `Due Date` etc). Historical Accuracy now populates without needing an Advanced Roadmaps CSV for teams whose target dates live on the ticket itself.
+
+### v1.5.8
+- **Historical Accuracy diagnostics** — new "🔍 Why are so few items showing?" expander in the Plan Accuracy tab shows three counts: resolved items, items with a roadmap target date, and items with both. Includes plain-English guidance on the most common cause (Roadmaps exports hiding completed items).
+
+### v1.5.7
+- **Plan Accuracy minimum threshold** — Historical Accuracy stats are now hidden when fewer than 5 completed items have a target end date (showing a plain "not enough data yet" message instead of misleading percentages from 1–2 items). A raw detail expander still shows the underlying data.
+
+### v1.5.6
+- **In-flight ticket drill-down on Overview** — the "Current WIP by state" section now has a "📋 View in-flight tickets" expander listing every unresolved item with key, title, type, squad, status, and age in days, sorted oldest first.
+
+### v1.5.5
+- **Fix duplicate Plotly chart ID crash** — `StreamlitDuplicateElementId` error on the Plan Accuracy tab when multiple squads were loaded. All `plotly_chart` calls now have unique `key=` arguments.
+
+### v1.5.4
+- **Squad capacity (%) slider** — new slider in the sidebar under **🎲 Forecast Settings** scales throughput samples before Monte Carlo simulations. 80% means the team delivers at 80% of raw throughput (accounts for ceremonies, unplanned work, and overhead). Applies to all three forecast modes (How Many, When, Risk-Adjusted When). Info bar shows raw mean → adjusted mean.
+
+### v1.5.3
+- **GitHub repository renamed** to `FlowModel`. All internal update-check URLs updated accordingly. The in-app upgrade banner now correctly points to the new repo.
+
+### v1.5.2
+- **Squad view radio in sync with sidebar dropdown** — the squad selector at the top of the main view now uses the same threshold-filtered squad list as the sidebar multiselect, preventing product-area component names (e.g. `TMA`, `AIOP`) from appearing as squad options in one place but not the other.
+
 ### v1.5.1
 - **Date Drift — multi-squad baseline comparison** — the Snapshot Comparison baseline uploader now accepts multiple files (one per squad). The app auto-detects each baseline's squad name from its `Components` column, matches it to the corresponding squad in the current data, shows a combined programme-level header, and renders a separate section per squad with its own metrics, drift chart, and plain-English summary.
 
@@ -627,7 +661,7 @@ The build takes about **5–8 minutes**. You can watch it under the
 **Actions** tab on GitHub. When it turns green, the zip is ready to share.
 
 Colleagues just need the link:
-`https://github.com/markcocoscopas/squad-flow-metrics/releases/latest`
+`https://github.com/markcocoscopas/FlowModel/releases/latest`
 
 You can also trigger a test build at any time **without** creating a release
 by going to **Actions → Build Windows Package → Run workflow**.
