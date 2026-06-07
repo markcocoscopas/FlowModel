@@ -31,7 +31,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(_ROOT / "squad_flow.log", encoding="utf-8"),
+        logging.FileHandler("/tmp/squad_flow.log", encoding="utf-8"),
     ],
 )
 log = logging.getLogger(__name__)
