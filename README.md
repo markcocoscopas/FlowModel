@@ -1,3 +1,12 @@
+> ## Repository moved
+>
+> This project has moved to Codeberg and is now maintained there:
+>
+> https://codeberg.org/markcopas/FlowModel
+>
+> This GitHub repository is archived and kept only for historical reference.
+
+
 # Squad Flow Metrics
 
 A local-web dashboard for flow-based analytics across one or more Agile squads.
